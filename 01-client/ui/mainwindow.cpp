@@ -1,0 +1,1045 @@
+#include "mainwindow.h"
+#include "../hardware/hardwareinit.h"
+#include <QApplication>
+#include <QDateTime>
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QPixmap>
+#include <QProcess>
+
+// Colors
+#define COLOR_BG_DARK "#1a1a2e"
+#define COLOR_BG_PANEL "#16213e"
+#define COLOR_ACCENT "#e94560"
+#define COLOR_SUCCESS "#4ecca3"
+#define COLOR_WARNING "#ffd93d"
+#define COLOR_TEXT_GRAY "#a0a0a0"
+
+// Server
+#define SERVER_HOST "192.168.137.121" // Host PC
+#define SERVER_PORT 8888
+#define RFID_VALID_WINDOW_MS 15000
+#define GATE_OPEN_MS 5000
+#define PLATE_COOLDOWN_MS GATE_OPEN_MS
+#define AUDIO_DIR_PATH "/run/media/mmcblk1p1/audio"
+
+MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
+    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware)
+{
+    setWindowTitle("Smart Parking");
+    setFixedSize(1024, 600);
+
+    // Dark theme
+    setStyleSheet(QString(
+                      "QMainWindow { background-color: %1; }"
+                      "QLabel { color: white; }"
+                      "QPushButton { "
+                      "    border: none; "
+                      "    border-radius: 8px; "
+                      "    padding: 12px 30px; "
+                      "    font-size: 16px; "
+                      "    font-weight: bold; "
+                      "}"
+                      "QPushButton:hover { opacity: 0.9; }"
+                      "QGroupBox { "
+                      "    border: 1px solid #333; "
+                      "    border-radius: 10px; "
+                      "    margin-top: 10px; "
+                      "    padding-top: 10px; "
+                      "    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %2, stop:1 %1); "
+                      "}"
+                      "QGroupBox::title { "
+                      "    color: %3; "
+                      "    subcontrol-origin: margin; "
+                      "    left: 15px; "
+                      "    font-size: 16px; "
+                      "}"
+                      "QProgressBar { "
+                      "    border: none; "
+                      "    border-radius: 10px; "
+                      "    background-color: #333; "
+                      "    height: 20px; "
+                      "    text-align: center; "
+                      "}"
+                      "QProgressBar::chunk { "
+                      "    border-radius: 10px; "
+                      "    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %4, stop:1 #45b7aa); "
+                      "}"
+                      "QListWidget { "
+                      "    background: transparent; "
+                      "    border: none; "
+                      "    color: white; "
+                      "}"
+                      "QListWidget::item { "
+                      "    background: rgba(255,255,255,0.05); "
+                      "    border-radius: 5px; "
+                      "    padding: 8px; "
+                      "    margin: 2px 0; "
+                      "}")
+                      .arg(COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_ACCENT, COLOR_SUCCESS));
+
+    setupUI();
+    setupMenuBar();
+
+    // Database
+    m_db = new Database(this);
+    if (!m_db->open("/run/media/mmcblk1p1/parking.db"))
+    {
+        qDebug() << "Database open failed:" << m_db->lastError();
+    }
+
+    // Child windows
+    m_queryWindow = new QueryWindow(m_db, this);
+    m_settingsWindow = new SettingsWindow(this);
+    m_exitDialog = new ExitDialog(this);
+    m_audioThread = new AudioThread(this);
+
+    // Signals
+    connect(m_queryWindow, &QueryWindow::backToMain, this, &MainWindow::onQueryBack);
+    connect(m_settingsWindow, &SettingsWindow::backToMain, this, &MainWindow::onSettingsBack);
+    connect(m_exitDialog, &ExitDialog::cancelled, this, &MainWindow::onExitDialogCancelled);
+    connect(m_exitDialog, &ExitDialog::timedOut, this, &MainWindow::onExitDialogTimedOut);
+    connect(m_exitDialog, &QDialog::finished, this, [this](int)
+            { closeExitDialog(true); });
+    connect(m_audioThread, &AudioThread::playbackStarted, this, &MainWindow::onAudioPlaybackStarted);
+    connect(m_audioThread, &AudioThread::playbackFinished, this, &MainWindow::onAudioPlaybackFinished);
+    connect(m_audioThread, &AudioThread::playbackError, this, &MainWindow::onAudioPlaybackError);
+    m_audioThread->start();
+
+    // Video and network
+    setupVideoThread();
+    setupRfidThread();
+    setupNetwork();
+
+    // Clock timer
+    m_updateTimer = new QTimer(this);
+    connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateTime);
+    connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateParkingStatus);
+    connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateRecentEntries);
+    m_updateTimer->start(1000);
+
+    // Video refresh: latest frame only
+    m_videoRefreshTimer = new QTimer(this);
+    connect(m_videoRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshVideoFrame);
+    m_videoRefreshTimer->start(50);
+
+    // Periodic recognition upload
+    m_recognitionTimer = new QTimer(this);
+    connect(m_recognitionTimer, &QTimer::timeout, this, &MainWindow::onRecognitionTimer);
+    m_recognitionTimer->start(1500);
+
+    m_gateCloseTimer = new QTimer(this);
+    m_gateCloseTimer->setSingleShot(true);
+    connect(m_gateCloseTimer, &QTimer::timeout, this, &MainWindow::onGateCloseTimeout);
+
+    updateTime();
+    updateParkingStatus();
+    updateRecentEntries();
+}
+
+MainWindow::~MainWindow()
+{
+    // Stop video thread
+    if (m_videoThread)
+    {
+        m_videoThread->stop();
+        m_videoThread->wait();
+        delete m_videoThread;
+    }
+
+    if (m_rfidThread)
+    {
+        m_rfidThread->stop();
+        m_rfidThread->wait();
+        delete m_rfidThread;
+    }
+
+    if (m_audioThread)
+    {
+        m_audioThread->stop();
+        m_audioThread->wait();
+        delete m_audioThread;
+    }
+
+    // Close camera
+    if (m_camera)
+    {
+        m_camera->close();
+        delete m_camera;
+    }
+
+    // Disconnect network
+    if (m_networkClient)
+    {
+        m_networkClient->disconnect();
+        delete m_networkClient;
+    }
+
+    if (m_db)
+    {
+        m_db->close();
+    }
+}
+
+bool MainWindow::initHardware()
+{
+    // Init camera
+    m_camera = new V4L2Camera(this);
+
+    // Open camera device
+    QString cameraDevice = "/dev/video1";
+    if (!m_camera->open(cameraDevice))
+    {
+        qDebug() << "Camera open failed:" << m_camera->lastError();
+        // Try fallback device
+        cameraDevice = "/dev/video0";
+        if (!m_camera->open(cameraDevice))
+        {
+            qDebug() << "Camera open failed:" << m_camera->lastError();
+            return false;
+        }
+    }
+
+    // Prefer raw preview to avoid JPEG decode issues on board
+    if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_RGB565))
+    {
+        if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_YUYV))
+        {
+            if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_JPEG))
+            {
+                if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_UYVY))
+                {
+                    qDebug() << "setFormat failed:" << m_camera->lastError();
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Request buffers
+    if (!m_camera->requestBuffers(4))
+    {
+        qDebug() << "requestBuffers failed:" << m_camera->lastError();
+        return false;
+    }
+
+    qDebug() << "Camera OK, pixel format:" << m_camera->pixelFormatName();
+    return true;
+}
+
+void MainWindow::setupVideoThread()
+{
+    // Init camera hardware
+    if (!initHardware())
+    {
+        qDebug() << "Camera init failed, video disabled";
+        m_videoLabel->setText("Camera unavailable\n\nCheck device");
+        return;
+    }
+
+    // Video capture thread
+    m_videoThread = new VideoThread(this);
+    m_videoThread->setCamera(m_camera);
+
+    // Signals
+    connect(m_videoThread, &VideoThread::captureDone, this, &MainWindow::onCaptureDone);
+
+    // Start capture
+    m_videoThread->start();
+}
+
+void MainWindow::setupRfidThread()
+{
+    if (!m_hardware || !m_hardware->serialPort() || !m_hardware->serialPort()->isOpen())
+    {
+        qDebug() << "RFID serial not ready, skip RFID thread";
+        return;
+    }
+
+    m_rfidThread = new RfidThread(this);
+    m_rfidThread->setSerialPort(m_hardware->serialPort());
+    connect(m_rfidThread, &RfidThread::cardDetected, this, &MainWindow::onRfidCardDetected);
+    connect(m_rfidThread, &RfidThread::readError, this, &MainWindow::onRfidReadError);
+    m_rfidThread->start();
+}
+
+void MainWindow::setupNetwork()
+{
+    m_networkClient = new NetworkClient(this);
+
+    // Network signals
+    connect(m_networkClient, &NetworkClient::connected, this, &MainWindow::onNetworkConnected);
+    connect(m_networkClient, &NetworkClient::disconnected, this, &MainWindow::onNetworkDisconnected);
+    connect(m_networkClient, &NetworkClient::errorOccurred, this, &MainWindow::onNetworkError);
+    connect(m_networkClient, &NetworkClient::recognizeResultReady, this, &MainWindow::onRecognizeResultReady);
+    connect(m_networkClient, &NetworkClient::audioFileReady, this, &MainWindow::onAudioFileReady);
+
+    // Connect to server
+    m_networkClient->connectToServer(SERVER_HOST, SERVER_PORT);
+}
+
+void MainWindow::setupUI()
+{
+    QWidget *centralWidget = new QWidget(this);
+    centralWidget->setStyleSheet(QString("background-color: %1;").arg(COLOR_BG_DARK));
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setSpacing(10);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+
+    // Header
+    QHBoxLayout *headerLayout = new QHBoxLayout();
+    m_titleLabel = new QLabel("Smart Parking");
+    m_titleLabel->setStyleSheet(QString(
+                                    "font-size: 24px; font-weight: bold; color: %1; padding: 5px;")
+                                    .arg(COLOR_ACCENT));
+
+    m_timeLabel = new QLabel();
+    m_timeLabel->setStyleSheet("font-size: 18px; color: #a0a0a0; padding: 5px;");
+
+    headerLayout->addWidget(m_titleLabel);
+    headerLayout->addStretch();
+    headerLayout->addWidget(m_timeLabel);
+    mainLayout->addLayout(headerLayout);
+
+    // Main content
+    QHBoxLayout *contentLayout = new QHBoxLayout();
+    contentLayout->setSpacing(10);
+
+    // Video panel
+    QGroupBox *videoGroup = createVideoPanel();
+    videoGroup->setFixedWidth(650);
+    contentLayout->addWidget(videoGroup);
+
+    // Side panel
+    QVBoxLayout *rightLayout = new QVBoxLayout();
+    rightLayout->setSpacing(10);
+
+    // Parking status
+    QGroupBox *statusGroup = createStatusPanel();
+    rightLayout->addWidget(statusGroup);
+
+    // Gate
+    QGroupBox *gateGroup = createGatePanel();
+    rightLayout->addWidget(gateGroup);
+
+    // Recent records
+    QGroupBox *recentGroup = createRecentPanel();
+    rightLayout->addWidget(recentGroup, 1);
+
+    contentLayout->addLayout(rightLayout, 1);
+    mainLayout->addLayout(contentLayout, 1);
+
+    // Bottom bar
+    QWidget *bottomBar = createBottomBar();
+    mainLayout->addWidget(bottomBar);
+
+    setCentralWidget(centralWidget);
+}
+
+void MainWindow::setupMenuBar()
+{
+    // No menu bar
+}
+
+QGroupBox *MainWindow::createVideoPanel()
+{
+    QGroupBox *group = new QGroupBox("Live video");
+    QVBoxLayout *layout = new QVBoxLayout(group);
+
+    m_videoLabel = new QLabel();
+    m_videoLabel->setMinimumSize(620, 420);
+    m_videoLabel->setStyleSheet(QString(
+                                    "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                                    "stop:0 %1, stop:1 %2); "
+                                    "border-radius: 10px; "
+                                    "border: 2px solid #333;")
+                                    .arg(COLOR_BG_DARK, COLOR_BG_PANEL));
+    m_videoLabel->setAlignment(Qt::AlignCenter);
+    m_videoLabel->setText("Live camera\n\n640 x 480\nWaiting for stream...");
+
+    layout->addWidget(m_videoLabel);
+    return group;
+}
+
+QGroupBox *MainWindow::createStatusPanel()
+{
+    QGroupBox *group = new QGroupBox("Parking slots");
+    QHBoxLayout *mainLayout = new QHBoxLayout(group);
+
+    // Numbers
+    QVBoxLayout *statusLayout = new QVBoxLayout();
+
+    QHBoxLayout *numbersLayout = new QHBoxLayout();
+    numbersLayout->setSpacing(20);
+
+    // Total
+    QVBoxLayout *totalLayout = new QVBoxLayout();
+    QLabel *totalLabel = new QLabel("Total");
+    totalLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_totalSpacesLabel = new QLabel("50");
+    m_totalSpacesLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
+    m_totalSpacesLabel->setAlignment(Qt::AlignCenter);
+    totalLayout->addWidget(totalLabel);
+    totalLayout->addWidget(m_totalSpacesLabel);
+
+    // Occupied
+    QVBoxLayout *parkedLayout = new QVBoxLayout();
+    QLabel *parkedLabel = new QLabel("Parked");
+    parkedLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_parkedLabel = new QLabel("0");
+    m_parkedLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_WARNING));
+    m_parkedLabel->setAlignment(Qt::AlignCenter);
+    parkedLayout->addWidget(parkedLabel);
+    parkedLayout->addWidget(m_parkedLabel);
+
+    // Available
+    QVBoxLayout *availableLayout = new QVBoxLayout();
+    QLabel *availableLabel = new QLabel("Available");
+    availableLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_availableLabel = new QLabel("50");
+    m_availableLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
+    m_availableLabel->setAlignment(Qt::AlignCenter);
+    availableLayout->addWidget(availableLabel);
+    availableLayout->addWidget(m_availableLabel);
+
+    numbersLayout->addLayout(totalLayout);
+    numbersLayout->addLayout(parkedLayout);
+    numbersLayout->addLayout(availableLayout);
+    numbersLayout->addStretch();
+
+    statusLayout->addLayout(numbersLayout);
+
+    // Occupancy bar
+    m_occupancyBar = new QProgressBar();
+    m_occupancyBar->setRange(0, 100);
+    m_occupancyBar->setValue(0);
+    m_occupancyBar->setFormat("%p%");
+    m_occupancyBar->setFixedHeight(20);
+    statusLayout->addWidget(m_occupancyBar);
+
+    mainLayout->addLayout(statusLayout);
+    return group;
+}
+
+QGroupBox *MainWindow::createGatePanel()
+{
+    QGroupBox *group = new QGroupBox();
+    QHBoxLayout *layout = new QHBoxLayout(group);
+
+    QLabel *gateIcon = new QLabel("[GATE]");
+    gateIcon->setStyleSheet("font-size: 18px; font-weight: bold; color: #e94560;");
+
+    QVBoxLayout *infoLayout = new QVBoxLayout();
+    QLabel *gateLabel = new QLabel("Gate");
+    gateLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_gateStatusLabel = new QLabel("Closed");
+    m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
+    m_gateStatusLabel->setWordWrap(true);
+
+    infoLayout->addWidget(gateLabel);
+    infoLayout->addWidget(m_gateStatusLabel);
+
+    layout->addWidget(gateIcon);
+    layout->addLayout(infoLayout);
+    layout->addStretch();
+
+    return group;
+}
+
+QGroupBox *MainWindow::createRecentPanel()
+{
+    QGroupBox *group = new QGroupBox("Recent");
+    QVBoxLayout *layout = new QVBoxLayout(group);
+
+    m_recentList = new QListWidget();
+    m_recentList->setStyleSheet(
+        "QListWidget { background: transparent; border: none; }"
+        "QListWidget::item { background: rgba(255,255,255,0.05); border-radius: 5px; padding: 10px; margin: 2px 0; }"
+        "QListWidget::item:selected { background: rgba(233, 69, 96, 0.3); }");
+
+    layout->addWidget(m_recentList);
+    return group;
+}
+
+QWidget *MainWindow::createBottomBar()
+{
+    QWidget *bar = new QWidget();
+    bar->setFixedHeight(60);
+    bar->setStyleSheet(QString("background-color: %1;").arg(COLOR_BG_PANEL));
+
+    QHBoxLayout *layout = new QHBoxLayout(bar);
+    layout->setSpacing(20);
+
+    QPushButton *queryBtn = new QPushButton("Records");
+    queryBtn->setStyleSheet(QString(
+                                "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #3db892); "
+                                "color: white;")
+                                .arg(COLOR_SUCCESS));
+
+    QPushButton *settingsBtn = new QPushButton("Settings");
+    settingsBtn->setStyleSheet(QString(
+                                   "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #3db892); "
+                                   "color: white;")
+                                   .arg(COLOR_SUCCESS));
+
+    connect(queryBtn, &QPushButton::clicked, this, &MainWindow::onQueryClicked);
+    connect(settingsBtn, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
+
+    layout->addStretch();
+    layout->addWidget(queryBtn);
+    layout->addWidget(settingsBtn);
+    layout->addStretch();
+
+    return bar;
+}
+
+void MainWindow::updateTime()
+{
+    m_timeLabel->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
+    updateGateStatusDisplay();
+}
+
+void MainWindow::onQueryClicked()
+{
+    m_queryWindow->show();
+    m_queryWindow->raise();
+    m_queryWindow->activateWindow();
+}
+
+void MainWindow::onSettingsClicked()
+{
+    m_settingsWindow->show();
+    m_settingsWindow->raise();
+    m_settingsWindow->activateWindow();
+}
+
+void MainWindow::onRecognitionTimer()
+{
+    if (m_waitingForResult)
+    {
+        return;
+    }
+
+    if (m_recognitionBlockedUntil.isValid() &&
+        QDateTime::currentDateTime() < m_recognitionBlockedUntil)
+    {
+        return;
+    }
+
+    if (m_exitDialog && m_exitDialog->isVisible())
+    {
+        return;
+    }
+
+    if ((m_queryWindow && m_queryWindow->isVisible()) ||
+        (m_settingsWindow && m_settingsWindow->isVisible()))
+    {
+        return;
+    }
+
+    if (!m_networkClient || !m_networkClient->isConnected())
+    {
+        return;
+    }
+
+    if (!m_videoThread || !m_camera || m_camera->state() != V4L2Camera::StateStreaming)
+    {
+        return;
+    }
+
+    m_waitingForResult = true;
+    m_videoThread->triggerCapture();
+}
+
+void MainWindow::onRfidCardDetected(const QString &cardId)
+{
+    if (!m_db || !m_db->isOpen())
+    {
+        qDebug() << "RFID ignored: DB closed";
+        return;
+    }
+
+    if (!m_db->ensureCardAccount(cardId))
+    {
+        qDebug() << "RFID account init failed, card:" << cardId << "err:" << m_db->lastError();
+        return;
+    }
+
+    double balance = m_db->getCardBalance(cardId);
+    if (balance < 0)
+    {
+        qDebug() << "RFID balance query failed, card:" << cardId << "err:" << m_db->lastError();
+        return;
+    }
+
+    m_pendingRfidCard = cardId;
+    m_pendingRfidTime = QDateTime::currentDateTime();
+    qDebug() << "Exit swipe recorded, card:" << cardId << "balance:" << balance;
+
+    if (!m_exitDialog || !m_exitDialog->isVisible() || m_pendingExitPlateNumber.isEmpty())
+    {
+        qDebug() << "No pending exit, ignoring swipe";
+        return;
+    }
+
+    m_exitDialog->setPaymentInfo("Card OK, validating balance", cardId, balance);
+
+    if (!m_db->checkoutVehicle(m_pendingExitPlateNumber, cardId))
+    {
+        qDebug() << "Checkout failed, plate:" << m_pendingExitPlateNumber
+                 << "card:" << cardId
+                 << "err:" << m_db->lastError();
+        m_exitDialog->setPaymentInfo(QString("Swipe failed: %1").arg(m_db->lastError()), cardId, balance);
+        return;
+    }
+
+    double remainBalance = m_db->getCardBalance(cardId);
+    qDebug() << "Checkout OK, plate:" << m_pendingExitPlateNumber
+             << "card:" << cardId
+             << "fee:" << m_pendingExitFee
+             << "remaining:" << remainBalance;
+    m_exitDialog->stopCountdown();
+    m_exitDialog->setPaymentInfo(
+        QString("Charged ¥%1, balance ¥%2")
+            .arg(m_pendingExitFee, 0, 'f', 2)
+            .arg(remainBalance, 0, 'f', 2),
+        cardId,
+        remainBalance);
+    markPlateCooldown(m_pendingExitPlateNumber);
+    openGateForPassage(QString("Vehicle %1 exited").arg(m_pendingExitPlateNumber));
+    m_pendingExitPlateNumber.clear();
+    updateParkingStatus();
+    updateRecentEntries();
+    QTimer::singleShot(1500, this, [this]()
+                       { closeExitDialog(true); });
+}
+
+void MainWindow::onRfidReadError(const QString &error)
+{
+    qDebug() << "RFID读取err:" << error;
+}
+
+void MainWindow::updateParkingStatus()
+{
+    if (!m_db || !m_db->isOpen())
+        return;
+
+    ParkingConfig config = m_db->getConfig();
+    int parked = m_db->getParkedCount();
+    int available = m_db->getAvailableSpaces();
+    double rate = m_db->getOccupancyRate();
+
+    m_totalSpacesLabel->setText(QString::number(config.totalSpaces));
+    m_parkedLabel->setText(QString::number(parked));
+    m_availableLabel->setText(QString::number(available));
+    m_occupancyBar->setValue((int)rate);
+}
+
+void MainWindow::updateRecentEntries()
+{
+    if (!m_db || !m_db->isOpen())
+        return;
+
+    QList<ParkingRecord> records = m_db->getRecentRecords(5);
+
+    m_recentList->clear();
+    for (const ParkingRecord &record : records)
+    {
+        bool isExit = record.exitTime.isValid();
+        QString actionText = isExit ? QString::fromUtf8("EXIT") : QString::fromUtf8("ENTRY");
+        QString timeText = isExit ? record.exitTime.toString("MM-dd hh:mm:ss")
+                                  : record.entryTime.toString("MM-dd hh:mm:ss");
+        QString itemText = QString("%1  %2\n%3")
+                               .arg(actionText)
+                               .arg(record.plateNumber)
+                               .arg(timeText);
+
+        QListWidgetItem *item = new QListWidgetItem(itemText);
+        item->setForeground(QColor("#ffffff"));
+        item->setBackground(isExit ? QColor("#1d5e4d") : QColor("#6a4320"));
+        m_recentList->addItem(item);
+    }
+
+    // Empty hint
+    if (records.isEmpty())
+    {
+        m_recentList->addItem("暂无Recent");
+    }
+}
+
+bool MainWindow::isPlateInCooldown(const QString &plateNumber) const
+{
+    if (!m_plateCooldowns.contains(plateNumber))
+    {
+        return false;
+    }
+
+    return m_plateCooldowns.value(plateNumber).msecsTo(QDateTime::currentDateTime()) < PLATE_COOLDOWN_MS;
+}
+
+void MainWindow::markPlateCooldown(const QString &plateNumber)
+{
+    m_plateCooldowns.insert(plateNumber, QDateTime::currentDateTime());
+}
+
+void MainWindow::onQueryBack()
+{
+    // Query back
+}
+
+void MainWindow::onSettingsBack()
+{
+    // Settings back
+}
+
+void MainWindow::onExitDialogCancelled()
+{
+    qDebug() << "出场窗口Closed";
+    if (!m_pendingExitPlateNumber.isEmpty())
+    {
+        markPlateCooldown(m_pendingExitPlateNumber);
+    }
+    closeExitDialog(true);
+}
+
+void MainWindow::onExitDialogTimedOut()
+{
+    qDebug() << "Exit swipe timeout";
+    if (!m_pendingExitPlateNumber.isEmpty())
+    {
+        markPlateCooldown(m_pendingExitPlateNumber);
+    }
+    closeExitDialog(true);
+}
+
+void MainWindow::onGateCloseTimeout()
+{
+    setGateOpened(false);
+}
+
+// --- Video slots ---
+
+void MainWindow::refreshVideoFrame()
+{
+    if (!m_videoThread)
+        return;
+
+    QImage frame = m_videoThread->takeLatestFrame();
+    if (frame.isNull())
+        return;
+
+    // Scale for label
+    QPixmap pixmap = QPixmap::fromImage(frame);
+    QPixmap scaled = pixmap.scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation);
+    m_videoLabel->setPixmap(scaled);
+}
+
+void MainWindow::onCaptureDone(const QImage &image, const QByteArray &rawFrame)
+{
+    qDebug() << "Capture done, sending raw frame";
+    if (!image.isNull())
+    {
+        m_lastCapturePixmap = QPixmap::fromImage(image);
+    }
+
+    if (m_networkClient && m_networkClient->isConnected())
+    {
+        bool sent = false;
+
+        if (!rawFrame.isEmpty() && m_camera)
+        {
+            sent = m_networkClient->sendRawFrameForRecognition(
+                rawFrame, m_camera->width(), m_camera->height(), m_camera->pixelFormatName());
+        }
+
+        if (!sent)
+        {
+            qDebug() << "Send capture failed:" << m_networkClient->lastError();
+            QMessageBox::warning(this, "Send failed", m_networkClient->lastError());
+            m_waitingForResult = false;
+            resetCaptureFlow();
+        }
+    }
+    else
+    {
+        if (!m_networkClient || !m_networkClient->isConnected())
+        {
+            QMessageBox::warning(this, "Network", "Not connected to LPR server");
+        }
+        m_waitingForResult = false;
+        resetCaptureFlow();
+    }
+}
+
+void MainWindow::onRecognizeResultReady(const NetworkClient::RecognizeResult &result)
+{
+    qDebug() << "Result:" << result.plateNumber << "conf:" << result.confidence;
+
+    if (result.success && !result.plateNumber.isEmpty())
+    {
+        processRecognitionResult(result.plateNumber, result.confidence);
+    }
+    else
+    {
+        // Recognition failed
+        QString errorMsg = result.errorMessage.isEmpty() ? "LPR failed, retry" : result.errorMessage;
+        qDebug() << "LPR failed, RFID:" << m_pendingRfidCard << "err:" << errorMsg;
+    }
+
+    m_waitingForResult = false;
+}
+
+void MainWindow::onNetworkConnected()
+{
+    qDebug() << "Connected to LPR server";
+    if (m_settingsWindow)
+    {
+        m_settingsWindow->setActualConnectionStatus(true);
+    }
+}
+
+void MainWindow::onNetworkDisconnected()
+{
+    qDebug() << "Disconnected from LPR server";
+    if (m_settingsWindow)
+    {
+        m_settingsWindow->setActualConnectionStatus(false);
+    }
+}
+
+void MainWindow::onNetworkError(const QString &error)
+{
+    qDebug() << "网络err:" << error;
+}
+
+void MainWindow::onAudioFileReady(const QString &fileName, const QByteArray &audioData)
+{
+    if (fileName.isEmpty() || audioData.isEmpty())
+    {
+        qDebug() << "Invalid audio, skip save";
+        return;
+    }
+
+    QDir dir(audioDirectoryPath());
+    if (!dir.exists() && !dir.mkpath("."))
+    {
+        qDebug() << "mkdir audio failed:" << dir.absolutePath();
+        return;
+    }
+
+    QString fullPath = dir.filePath(fileName);
+    QFile file(fullPath);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        qDebug() << "Save audio failed:" << fullPath << file.errorString();
+        return;
+    }
+
+    file.write(audioData);
+    file.close();
+    qDebug() << "Audio saved:" << fullPath;
+
+    if (m_audioThread)
+    {
+        m_audioThread->enqueueFile(fullPath);
+    }
+}
+
+void MainWindow::onAudioPlaybackStarted(const QString &filePath)
+{
+    qDebug() << "Playback start:" << filePath;
+}
+
+void MainWindow::onAudioPlaybackFinished(const QString &filePath)
+{
+    qDebug() << "Playback done:" << filePath;
+}
+
+void MainWindow::onAudioPlaybackError(const QString &filePath, const QString &error)
+{
+    qDebug() << "Playback error:" << filePath << error;
+}
+
+void MainWindow::resetCaptureFlow()
+{
+}
+
+QString MainWindow::audioDirectoryPath() const
+{
+    return QString::fromUtf8(AUDIO_DIR_PATH);
+}
+
+void MainWindow::setGateOpened(bool opened, const QString &reason)
+{
+    if (!m_gateStatusLabel)
+    {
+        return;
+    }
+
+    if (opened)
+    {
+        m_gateOpenUntil = QDateTime::currentDateTime().addMSecs(GATE_OPEN_MS);
+        m_gateOpenReason = reason;
+        updateGateStatusDisplay();
+        return;
+    }
+
+    m_gateOpenUntil = QDateTime();
+    m_gateOpenReason.clear();
+    m_gateStatusLabel->setText("Closed");
+    m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
+}
+
+void MainWindow::openGateForPassage(const QString &reason)
+{
+    m_recognitionBlockedUntil = QDateTime::currentDateTime().addMSecs(GATE_OPEN_MS);
+    setGateOpened(true, reason);
+    if (m_gateCloseTimer)
+    {
+        m_gateCloseTimer->start(GATE_OPEN_MS);
+    }
+}
+
+void MainWindow::updateGateStatusDisplay()
+{
+    if (!m_gateStatusLabel)
+    {
+        return;
+    }
+
+    if (!m_gateOpenUntil.isValid())
+    {
+        return;
+    }
+
+    qint64 remainingMs = QDateTime::currentDateTime().msecsTo(m_gateOpenUntil);
+    if (remainingMs <= 0)
+    {
+        m_gateStatusLabel->setText("Closed");
+        m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
+        return;
+    }
+
+    int remainingSeconds = static_cast<int>((remainingMs + 999) / 1000);
+    QString text = m_gateOpenReason.isEmpty()
+                       ? QString("OPEN (%1s)").arg(remainingSeconds)
+                       : QString("OPEN (%1s)\n%2").arg(remainingSeconds).arg(m_gateOpenReason);
+    m_gateStatusLabel->setText(text);
+    m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
+}
+
+void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
+{
+    if (!m_exitDialog)
+    {
+        return;
+    }
+
+    QDateTime now = QDateTime::currentDateTime();
+    qint64 durationMinutes = (vehicleInfo.entryTime.secsTo(now) + 59) / 60;
+    int duration = qMax(1, static_cast<int>(durationMinutes));
+    double fee = m_db->calculateFee(vehicleInfo.entryTime, now);
+
+    m_pendingExitPlateNumber = vehicleInfo.plateNumber;
+    m_pendingExitEntryTime = vehicleInfo.entryTime;
+    m_pendingExitFee = fee;
+    m_pendingRfidCard.clear();
+    m_pendingRfidTime = QDateTime();
+
+    m_exitDialog->setImage(m_lastCapturePixmap);
+    m_exitDialog->setParkingInfo(vehicleInfo.plateNumber, vehicleInfo.entryTime, now, duration);
+    m_exitDialog->setFeeInfo(fee);
+    m_exitDialog->setPaymentInfo("Swipe RFID within 10 s to exit");
+    m_exitDialog->startCountdown(10);
+    m_exitDialog->show();
+    m_exitDialog->raise();
+    m_exitDialog->activateWindow();
+
+    if (m_recognitionTimer)
+    {
+        m_recognitionTimer->stop();
+    }
+
+    qDebug() << "Parked vehicle, exit dialog, plate:" << vehicleInfo.plateNumber
+             << "minutes:" << duration
+             << "fee due:" << fee;
+}
+
+void MainWindow::closeExitDialog(bool resumeRecognition)
+{
+    if (m_exitDialog && m_exitDialog->isVisible())
+    {
+        m_exitDialog->stopCountdown();
+        m_exitDialog->hide();
+    }
+
+    m_pendingExitPlateNumber.clear();
+    m_pendingExitEntryTime = QDateTime();
+    m_pendingExitFee = 0.0;
+    m_pendingRfidCard.clear();
+    m_pendingRfidTime = QDateTime();
+
+    if (resumeRecognition && m_recognitionTimer && !m_recognitionTimer->isActive())
+    {
+        m_recognitionTimer->start(1500);
+    }
+}
+
+void MainWindow::processRecognitionResult(const QString &plateNumber, double confidence)
+{
+    Q_UNUSED(confidence);
+
+    if (!m_db || !m_db->isOpen())
+    {
+        qDebug() << "Result ignored: DB closed";
+        return;
+    }
+
+    if (isPlateInCooldown(plateNumber))
+    {
+        qDebug() << "Cooldown, ignore plate:" << plateNumber;
+        return;
+    }
+
+    VehicleInfo activeVehicle = m_db->queryActiveVehicle(plateNumber);
+    if (activeVehicle.id == 0)
+    {
+        if (m_db->isIllegalVehicle(plateNumber))
+        {
+            if (m_hardware)
+            {
+                m_hardware->alarm();
+            }
+            qDebug() << "Entry denied (blacklist):" << plateNumber;
+            markPlateCooldown(plateNumber);
+            m_pendingRfidCard.clear();
+            m_pendingRfidTime = QDateTime();
+            return;
+        }
+
+        int recordId = m_db->addVehicle(plateNumber);
+        if (recordId < 0)
+        {
+            qDebug() << "Entry DB failed, plate:" << plateNumber
+                     << "err:" << m_db->lastError();
+            m_pendingRfidCard.clear();
+            m_pendingRfidTime = QDateTime();
+            return;
+        }
+
+        qDebug() << "Entry OK, recordId:" << recordId << "车牌:" << plateNumber;
+        markPlateCooldown(plateNumber);
+        openGateForPassage(QString("Vehicle %1 entered").arg(plateNumber));
+        m_pendingRfidCard.clear();
+        m_pendingRfidTime = QDateTime();
+        updateParkingStatus();
+        updateRecentEntries();
+        return;
+    }
+
+    showExitDialog(activeVehicle);
+}
