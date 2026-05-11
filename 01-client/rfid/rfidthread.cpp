@@ -30,12 +30,12 @@ void RfidThread::stop()
 void RfidThread::run()
 {
     if (!m_serialPort || !m_serialPort->isOpen()) {
-        emit readError("RFID serial not open");
+        emit readError("RFID串口未打开");
         return;
     }
 
     m_running = true;
-    qDebug() << "RfidThread: listening";
+    qDebug() << "RfidThread: 开始监听RFID串口";
 
     while (m_running) {
         char buffer[64] = {0};
@@ -66,7 +66,7 @@ void RfidThread::run()
 
             m_lastCardId = cardId;
             m_lastCardTime = now;
-            qDebug() << "RfidThread: card" << cardId;
+            qDebug() << "RfidThread: 检测到卡号" << cardId;
             emit cardDetected(cardId);
         }
 
@@ -75,22 +75,22 @@ void RfidThread::run()
         }
     }
 
-    qDebug() << "RfidThread: stop";
+    qDebug() << "RfidThread: 停止监听";
 }
 
 QString RfidThread::extractCardId(QString &buffer)
 {
-    // Frame e.g. prefix + 10 digits + @
-    // Take last 10 digits before @
+    // 新模块格式: "记卡：0008038796@"，卡号为@之前的10位数字
+    // 简化逻辑：找到@，提取@之前最后10个数字
     int atPos = buffer.indexOf('@');
     if (atPos < 0) {
         return QString();
     }
 
-    // Before @
+    // 提取@之前的所有内容
     QString dataBeforeAt = buffer.left(atPos);
 
-    // Digits
+    // 提取所有数字
     QString digits;
     for (int i = dataBeforeAt.size() - 1; i >= 0 && digits.size() < 10; --i) {
         if (dataBeforeAt.at(i).isDigit()) {
@@ -98,10 +98,10 @@ QString RfidThread::extractCardId(QString &buffer)
         }
     }
 
-    // Consume
+    // 清空已处理的数据
     buffer.remove(0, atPos + 1);
 
-    // 10-digit id
+    // 验证卡号格式（10位数字）
     if (digits.length() == 10) {
         return digits;
     }

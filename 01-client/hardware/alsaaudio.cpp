@@ -1,6 +1,6 @@
 #include "alsaaudio.h"
 
-// ALSA stub
+// ALSA库暂时禁用，使用桩函数替代
 // #include <alsa/asoundlib.h>
 #include <QThread>
 
@@ -19,7 +19,7 @@ public:
     }
 };
 
-// Stub handle
+// ALSA句柄结构（桩）
 struct snd_pcm_t { int dummy; };
 
 AlsaAudio::AlsaAudio(QObject *parent)
@@ -39,12 +39,12 @@ AlsaAudio::~AlsaAudio()
 
 bool AlsaAudio::open(const QString &device)
 {
-    // Stub OK
+    // 桩函数：暂时返回成功
     Q_UNUSED(device);
     m_handle = new snd_pcm_t;
     m_state = StateReady;
     return true;
-    // Real impl:
+    // 实际代码：
     // int err = snd_pcm_open(&m_handle, device.toUtf8().constData(),
     //                        SND_PCM_STREAM_PLAYBACK, 0);
     // if (err < 0) {
@@ -67,11 +67,11 @@ void AlsaAudio::close()
 bool AlsaAudio::setParams(unsigned int sampleRate, unsigned int channels, Format format)
 {
     if (!m_handle) {
-        m_lastError = "Audio not open";
+        m_lastError = "音频设备未打开";
         return false;
     }
 
-    // Stub OK
+    // 桩函数：暂时返回成功
     m_sampleRate = sampleRate;
     m_channels = channels;
     m_format = format;
@@ -81,13 +81,13 @@ bool AlsaAudio::setParams(unsigned int sampleRate, unsigned int channels, Format
 bool AlsaAudio::play(const QByteArray &data)
 {
     if (!m_handle) {
-        m_lastError = "Audio not open";
+        m_lastError = "音频设备未打开";
         return false;
     }
 
     m_state = StatePlaying;
 
-    // Stub delay
+    // 桩函数：模拟播放延时
     int bytesPerSample = 2;
     int frameSize = m_channels * bytesPerSample;
     int frames = data.size() / frameSize;

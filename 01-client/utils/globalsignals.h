@@ -102,9 +102,9 @@ signals:
     void vehicleExitSuccess(const QString &plateNumber, double fee);
 
     /**
-     * @brief Parking slots更新
+     * @brief 车位状态更新
      * @param available 空闲车位数
-     * @param total Total数
+     * @param total 总车位数
      */
     void parkingStatusUpdated(int available, int total);
 
@@ -123,7 +123,7 @@ signals:
     void networkConnectionChanged(bool connected);
 
     /**
-     * @brief Network
+     * @brief 网络错误
      * @param error 错误信息
      */
     void networkError(const QString &error);

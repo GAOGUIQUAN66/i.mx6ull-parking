@@ -3,7 +3,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 
-// Colors
+// 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
 #define COLOR_BG_PANEL "#16213e"
 #define COLOR_ACCENT "#e94560"
@@ -78,7 +78,7 @@ void QueryWindow::setupUI()
     mainLayout->setSpacing(10);
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // Header
+    // 顶部栏
     QWidget *header = new QWidget();
     header->setFixedHeight(50);
     header->setStyleSheet(QString("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #0f3460); border-bottom: 2px solid %2;").arg(COLOR_BG_PANEL, COLOR_ACCENT));

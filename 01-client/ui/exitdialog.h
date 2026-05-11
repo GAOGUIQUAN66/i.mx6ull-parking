@@ -9,10 +9,10 @@
 #include <QTimer>
 
 /**
- * @brief Exit payment UI
+ * @brief 出场结算对话框
  *
- * Shows tariff + RFID prompt
- * Countdown + swipe
+ * 显示停车信息、费用明细
+ * 支持等待刷卡、倒计时超时自动关闭
  */
 class ExitDialog : public QDialog
 {
@@ -23,16 +23,16 @@ public:
     ~ExitDialog();
 
     /**
-     * @brief Snapshot pixmap
+     * @brief 设置出场抓拍图片
      */
     void setImage(const QPixmap &image);
 
     /**
-     * @brief Parking meta
-     * @param plateNumber
-     * @param entryTime
-     * @param exitTime
-     * @param duration minutes
+     * @brief 设置停车信息
+     * @param plateNumber 车牌号
+     * @param entryTime 入场时间
+     * @param exitTime 出场时间
+     * @param duration 停车时长（分钟）
      */
     void setParkingInfo(const QString &plateNumber, const QDateTime &entryTime,
                         const QDateTime &exitTime, int duration);
@@ -44,7 +44,7 @@ public:
     void stopCountdown();
 
     /**
-     * @brief Plate getter
+     * @brief 获取车牌号
      */
     QString getPlateNumber() const;
 
@@ -60,31 +60,31 @@ private:
     void setupUI();
     void updateCountdownLabel();
 
-    // Image
+    // 图片区域
     QLabel *m_imageLabel;
     QLabel *m_imageTimeLabel;
 
-    // Parking labels
+    // 停车信息
     QLabel *m_plateLabel;
     QLabel *m_entryTimeLabel;
     QLabel *m_exitTimeLabel;
     QLabel *m_durationLabel;
 
-    // Fee labels
+    // 费用信息
     QLabel *m_totalFeeLabel;
     QLabel *m_cardLabel;
     QLabel *m_balanceLabel;
     QLabel *m_statusLabel;
     QLabel *m_countdownLabel;
 
-    // Buttons
+    // 按钮
     QPushButton *m_closeBtn;
 
-    // Timer
+    // 倒计时
     QTimer *m_countdownTimer;
     int m_countdownValue;
 
-    // State
+    // 数据
     QString m_plateNumber;
 };
 

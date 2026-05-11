@@ -11,15 +11,15 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     qDebug() << "========================================";
-    qDebug() << "Smart parking system - starting";
+    qDebug() << "智能车库管理系统 - 启动";
     qDebug() << "========================================\n";
 
-    // Initialize hardware
+    // 初始化硬件
     HardwareInit hardware;
     HardwareInit::Config config;
     config.serialDevice = "/dev/ttymxc2";
     config.serialBaudRate = 9600;
-    config.cameraDevice = "";  // Camera opened in MainWindow, not here
+    config.cameraDevice = "";  // 不在main中初始化摄像头，由MainWindow管理
     config.cameraWidth = 640;
     config.cameraHeight = 480;
     config.audioDevice = "default";
@@ -28,16 +28,16 @@ int main(int argc, char *argv[])
     config.beeperPath = "/sys/class/leds/beep/brightness";
 
     if (!hardware.initAll(config)) {
-        qDebug() << "Hardware init failed:" << hardware.lastError();
+        qDebug() << "硬件初始化失败:" << hardware.lastError();
     } else {
-        qDebug() << "Hardware init OK";
+        qDebug() << "硬件初始化成功";
     }
 
-    // Show main window with hardware manager
+    // 创建并显示主窗口，传入硬件管理对象
     MainWindow mainWindow(&hardware);
     mainWindow.show();
 
-    qDebug() << "Main window shown";
+    qDebug() << "主窗口已显示";
 
     return app.exec();
 }

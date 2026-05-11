@@ -23,14 +23,14 @@ bool SerialPort::open(const QString &device, int baudRate)
         close();
     }
 
-    // Open tty
+    // 打开串口设备
     m_fd = ::open(device.toUtf8().constData(), O_RDWR | O_NOCTTY | O_NDELAY);
     if (m_fd < 0) {
-        m_lastError = QString("Cannot open serial %1: %2").arg(device).arg(strerror(errno));
+        m_lastError = QString("无法打开串口 %1: %2").arg(device).arg(strerror(errno));
         return false;
     }
 
-    // Blocking mode
+    // 恢复为阻塞模式
     int flags = fcntl(m_fd, F_GETFL, 0);
     fcntl(m_fd, F_SETFL, flags & ~O_NONBLOCK);
 
@@ -63,11 +63,11 @@ bool SerialPort::configure(int baudRate)
     struct termios options;
 
     if (tcgetattr(m_fd, &options) != 0) {
-        m_lastError = QString("tcgetattr failed: %1").arg(strerror(errno));
+        m_lastError = QString("获取串口属性失败: %1").arg(strerror(errno));
         return false;
     }
 
-    // Baud
+    // 设置波特率
     speed_t speed;
     switch (baudRate) {
     case 1200:   speed = B1200; break;
@@ -84,36 +84,36 @@ bool SerialPort::configure(int baudRate)
     cfsetispeed(&options, speed);
     cfsetospeed(&options, speed);
 
-    // 8 data bits
+    // 8位数据位
     options.c_cflag &= ~CSIZE;
     options.c_cflag |= CS8;
 
-    // no parity
+    // 无校验
     options.c_cflag &= ~PARENB;
 
-    // 1 stop
+    // 1位停止位
     options.c_cflag &= ~CSTOPB;
 
-    // RX on
+    // 启用接收
     options.c_cflag |= (CLOCAL | CREAD);
 
-    // no flow ctrl
+    // 禁用流控
     options.c_cflag &= ~CRTSCTS;
 
-    // raw
+    // 原始模式
     options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
     options.c_oflag &= ~OPOST;
 
-    // no sw flow
+    // 禁用软件流控
     options.c_iflag &= ~(IXON | IXOFF | IXANY);
     options.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
 
-    // timeout VMIN=0 VTIME=1
+    // 设置超时：VMIN=0, VTIME=1 (100ms)
     options.c_cc[VMIN] = 0;
     options.c_cc[VTIME] = 1;
 
     if (tcsetattr(m_fd, TCSANOW, &options) != 0) {
-        m_lastError = QString("tcsetattr failed: %1").arg(strerror(errno));
+        m_lastError = QString("设置串口属性失败: %1").arg(strerror(errno));
         return false;
     }
 
@@ -128,7 +128,7 @@ int SerialPort::read(char *buffer, int maxSize, int timeoutMs)
     }
 
     if (timeoutMs >= 0) {
-        // select()
+        // 使用select等待数据
         fd_set readFds;
         FD_ZERO(&readFds);
         FD_SET(m_fd, &readFds);
@@ -139,13 +139,13 @@ int SerialPort::read(char *buffer, int maxSize, int timeoutMs)
 
         int ret = select(m_fd + 1, &readFds, nullptr, nullptr, &tv);
         if (ret <= 0) {
-            return ret;  // timeout/err
+            return ret;  // 超时或错误
         }
     }
 
     int bytesRead = ::read(m_fd, buffer, maxSize);
     if (bytesRead < 0) {
-        m_lastError = QString("serial read failed: %1").arg(strerror(errno));
+        m_lastError = QString("读取串口失败: %1").arg(strerror(errno));
     }
 
     return bytesRead;
@@ -159,7 +159,7 @@ int SerialPort::write(const QByteArray &data)
 
     int bytesWritten = ::write(m_fd, data.constData(), data.size());
     if (bytesWritten < 0) {
-        m_lastError = QString("serial write failed: %1").arg(strerror(errno));
+        m_lastError = QString("写入串口失败: %1").arg(strerror(errno));
     }
 
     return bytesWritten;

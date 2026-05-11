@@ -4,7 +4,7 @@
 #include <QGroupBox>
 #include <QDateTime>
 
-// Colors
+// 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
 #define COLOR_BG_PANEL "#16213e"
 #define COLOR_ACCENT "#e94560"
@@ -80,7 +80,7 @@ void EntryDialog::setupUI()
     titleLabel->setAlignment(Qt::AlignCenter);
     mainLayout->addWidget(titleLabel);
 
-    // Main content
+    // 主内容区
     QHBoxLayout *contentLayout = new QHBoxLayout();
     contentLayout->setSpacing(20);
 

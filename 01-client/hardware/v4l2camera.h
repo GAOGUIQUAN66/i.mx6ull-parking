@@ -7,10 +7,10 @@
 #include <QByteArray>
 
 /**
- * @brief V4L2 capture
+ * @brief V4L2摄像头初始化与采集类
  *
- * Linux V4L2 capture for preview + ROI
- * Tested on i.MX6 CSI sensors
+ * 封装Linux V4L2视频子系统接口，提供摄像头初始化和帧采集功能
+ * 适配 i.MX6 CSI 接口的 OV 摄像头
  */
 class V4L2Camera : public QObject
 {
@@ -18,147 +18,147 @@ class V4L2Camera : public QObject
 
 public:
     /**
-     * @brief Pixel format
+     * @brief 图像格式
      */
     enum PixelFormat {
-        FORMAT_YUYV,  // YUYV
-        FORMAT_UYVY,  // UYVY
-        FORMAT_MJPEG, // MJPEG
-        FORMAT_JPEG,  // JPEG
-        FORMAT_RGB565 // RGB565
+        FORMAT_YUYV,  // YUYV格式
+        FORMAT_UYVY,  // UYVY格式
+        FORMAT_MJPEG, // MJPEG格式
+        FORMAT_JPEG,  // JPEG格式
+        FORMAT_RGB565 // RGB565格式
     };
 
     /**
-     * @brief Capture state
+     * @brief 摄像状态
      */
     enum State {
-        StateClosed,   // Closed
-        StateReady,    // idle
-        StateStreaming // streaming
+        StateClosed,   // 已关闭
+        StateReady,    // 就绪
+        StateStreaming // 正在采集
     };
 
     explicit V4L2Camera(QObject *parent = nullptr);
     ~V4L2Camera();
 
     /**
-     * @brief Open camera
-     * @param device e.g. /dev/video1
-     * @return true on success
+     * @brief 打开摄像头
+     * @param device 设备路径，如 /dev/video1
+     * @return 成功返回true
      */
     bool open(const QString &device);
 
     /**
-     * @brief Close camera
+     * @brief 关闭摄像头
      */
     void close();
 
     /**
-     * @brief Negotiate format
-     * @param width
-     * @param height
-     * @param format pixel format
-     * @return true on success
+     * @brief 设置图像格式
+     * @param width 宽度
+     * @param height 高度
+     * @param format 像素格式
+     * @return 成功返回true
      */
     bool setFormat(int width, int height, PixelFormat format = FORMAT_YUYV);
 
     /**
-     * @brief REQBUFS
-     * @param count buffers
-     * @return true on success
+     * @brief 请求缓冲区
+     * @param count 缓冲区数量
+     * @return 成功返回true
      */
     bool requestBuffers(int count = 4);
 
     /**
-     * @brief STREAMON
-     * @return true on success
+     * @brief 开始采集
+     * @return 成功返回true
      */
     bool startCapture();
 
     /**
-     * @brief STREAMOFF
+     * @brief 停止采集
      */
     void stopCapture();
 
     /**
-     * @brief Blocking grab
-     * @param timeoutMs ms
-     * @return QImage or empty
+     * @brief 获取一帧图像（阻塞）
+     * @param timeoutMs 超时时间（毫秒）
+     * @return 图像数据，失败返回空QImage
      */
     QImage grabFrame(int timeoutMs = 1000, QByteArray *rawFrame = nullptr);
 
     /**
-     * @brief Snapshot + mmap payload
-     * @param timeoutMs ms
-     * @return raw bytes for uplink
+     * @brief 抓拍当前帧并返回原始数据
+     * @param timeoutMs 超时时间（毫秒）
+     * @return 原始图像数据（用于网络传输）
      */
     QByteArray grabRawFrame(int timeoutMs = 1000);
 
     /**
-     * @brief State accessor
+     * @brief 获取当前状态
      */
     State state() const;
 
     /**
-     * @brief Width
+     * @brief 获取图像宽度
      */
     int width() const { return m_width; }
 
     /**
-     * @brief Height
+     * @brief 获取图像高度
      */
     int height() const { return m_height; }
 
     /**
-     * @brief FourCC string
+     * @brief 获取实际像素格式名称
      */
     QString pixelFormatName() const;
 
     /**
-     * @brief Last error string
+     * @brief 获取最后错误信息
      */
     QString lastError() const;
 
 signals:
     /**
-     * @brief frameReady
+     * @brief 帧就绪信号
      */
     void frameReady(const QImage &frame);
 
 private:
-    int m_fd;           // fd
-    int m_width;        // width
-    int m_height;       // height
-    PixelFormat m_format; // pixel format
-    State m_state;      // state
-    QString m_device;   // device node
+    int m_fd;           // 文件描述符
+    int m_width;        // 图像宽度
+    int m_height;       // 图像高度
+    PixelFormat m_format; // 像素格式
+    State m_state;      // 当前状态
+    QString m_device;   // 设备路径
     QString m_lastError;
-    quint32 m_actualFormat; // negotiated fourcc
+    quint32 m_actualFormat; // 实际像素格式（V4L2定义）
 
-    void** m_buffers;   // mmap buffers
-    int m_bufferCount;  // buffer count
+    void** m_buffers;   // 内存映射缓冲区
+    int m_bufferCount;  // 缓冲区数量
 
     /**
-     * @brief mmap setup
+     * @brief 初始化内存映射
      */
     bool initMmap(int count);
 
     /**
-     * @brief mmap teardown
+     * @brief 释放内存映射
      */
     void freeBuffers();
 
     /**
-     * @brief YUYV->RGB888
+     * @brief YUYV转RGB888
      */
     QImage yuyvToRgb(const void *data, int width, int height);
 
     /**
-     * @brief UYVY->RGB888
+     * @brief UYVY转RGB888
      */
     QImage uyvyToRgb(const void *data, int width, int height);
 
     /**
-     * @brief RGB565->RGB888
+     * @brief RGB565转RGB888
      */
     QImage rgb565ToRgb(const void *data, int width, int height);
 };

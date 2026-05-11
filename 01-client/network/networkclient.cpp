@@ -7,8 +7,8 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
-// Packet protocol
-#define PACKET_HEADER_SIZE 5  // 4-byte len + 1-byte type
+// 协议定义
+#define PACKET_HEADER_SIZE 5  // 4字节长度 + 1字节类型
 #define PACKET_TYPE_IMAGE 1
 #define PACKET_TYPE_TEXT 2
 #define PACKET_TYPE_RESULT 3
@@ -30,7 +30,7 @@ NetworkClient::NetworkClient(QObject *parent)
     connect(m_socket, &QTcpSocket::connected, this, &NetworkClient::onConnected);
     connect(m_socket, &QTcpSocket::disconnected, this, &NetworkClient::onDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkClient::onReadyRead);
-    // Qt 5.7: use error signal
+    // Qt 5.7 兼容：使用 error 信号而非 errorOccurred
     connect(m_socket, static_cast<void(QTcpSocket::*)(QAbstractSocket::SocketError)>(&QTcpSocket::error),
             this, &NetworkClient::onError);
     connect(m_reconnectTimer, &QTimer::timeout, this, &NetworkClient::onReconnectTimer);
@@ -46,7 +46,7 @@ bool NetworkClient::connectToServer(const QString &host, quint16 port)
     m_host = host;
     m_port = port;
 
-    qDebug() << "NetworkClient: connecting" << host << ":" << port;
+    qDebug() << "NetworkClient: 正在连接服务器" << host << ":" << port;
 
     m_socket->connectToHost(host, port);
     return true;
@@ -65,7 +65,7 @@ void NetworkClient::disconnect()
 bool NetworkClient::sendImageForRecognition(const QImage &image)
 {
     if (!isConnected()) {
-        m_lastError = "Not connected";
+        m_lastError = "未连接到服务器";
         return false;
     }
 
@@ -79,20 +79,20 @@ bool NetworkClient::sendImageForRecognition(const QImage &image)
         imageData.clear();
 
         if (!buffer.open(QIODevice::WriteOnly)) {
-            m_lastError = "Image buffer open failed";
+            m_lastError = "图像缓冲区打开失败";
             return false;
         }
 
         encodedFormat = "BMP";
         if (!image.save(&buffer, "BMP")) {
-            m_lastError = "Image encode failed (JPEG/BMP)";
+            m_lastError = "图像编码失败(JPEG/BMP均失败)";
             return false;
         }
     }
     buffer.close();
 
-    qDebug() << "NetworkClient: encoded," << encodedFormat
-             << "size:" << imageData.size() << "bytes";
+    qDebug() << "NetworkClient: 图像编码成功, 格式:" << encodedFormat
+             << "大小:" << imageData.size() << "字节";
 
     return sendRawImage(imageData);
 }
@@ -106,12 +106,12 @@ bool NetworkClient::sendRawFrameForRecognition(const QByteArray &data, int width
                                                const QString &pixelFormat)
 {
     if (!isConnected()) {
-        m_lastError = "Not connected";
+        m_lastError = "未连接到服务器";
         return false;
     }
 
     if (data.isEmpty() || width <= 0 || height <= 0 || pixelFormat.isEmpty()) {
-        m_lastError = "Invalid raw frame params";
+        m_lastError = "原始帧参数无效";
         return false;
     }
 
@@ -126,10 +126,10 @@ bool NetworkClient::sendRawFrameForRecognition(const QByteArray &data, int width
     payload.append(formatBytes);
     payload.append(data);
 
-    qDebug() << "NetworkClient: send raw frame"
-             << "fmt:" << pixelFormat
-             << "size:" << width << "x" << height
-             << "payload:" << data.size() << "bytes";
+    qDebug() << "NetworkClient: 发送原始帧"
+             << "格式:" << pixelFormat
+             << "尺寸:" << width << "x" << height
+             << "数据大小:" << data.size() << "字节";
 
     return sendPacket(payload, PACKET_TYPE_RAW_IMAGE);
 }
@@ -137,12 +137,12 @@ bool NetworkClient::sendRawFrameForRecognition(const QByteArray &data, int width
 bool NetworkClient::requestAudio(const QString &eventType, const QString &text, const QString &fileName)
 {
     if (!isConnected()) {
-        m_lastError = "Not connected";
+        m_lastError = "未连接到服务器";
         return false;
     }
 
     if (eventType.isEmpty() || text.isEmpty() || fileName.isEmpty()) {
-        m_lastError = "Invalid TTS request";
+        m_lastError = "语音请求参数无效";
         return false;
     }
 
@@ -153,7 +153,7 @@ bool NetworkClient::requestAudio(const QString &eventType, const QString &text, 
     request.insert("file_name", fileName);
 
     QByteArray payload = QJsonDocument(request).toJson(QJsonDocument::Compact);
-    qDebug() << "NetworkClient: TTS request"
+    qDebug() << "NetworkClient: 请求语音播报"
              << "event:" << eventType
              << "file:" << fileName
              << "text:" << text;
@@ -163,28 +163,28 @@ bool NetworkClient::requestAudio(const QString &eventType, const QString &text, 
 bool NetworkClient::sendPacket(const QByteArray &data, quint8 type)
 {
     if (!isConnected()) {
-        m_lastError = "Not connected";
+        m_lastError = "未连接到服务器";
         return false;
     }
 
-    // Packet: len + type + payload
+    // 构造数据包：4字节长度 + 1字节类型 + 数据
     QByteArray packet;
     QDataStream stream(&packet, QIODevice::WriteOnly);
     stream.setByteOrder(QDataStream::BigEndian);
 
     quint32 dataSize = data.size();
-    stream << dataSize;          // length
-    packet.append((char)type);   // type
-    packet.append(data);         // payload
+    stream << dataSize;          // 4字节长度
+    packet.append((char)type);   // 1字节类型
+    packet.append(data);         // 数据内容
 
     qint64 written = m_socket->write(packet);
     if (written != packet.size()) {
-        m_lastError = "Send incomplete";
+        m_lastError = "发送数据不完整";
         return false;
     }
 
     m_socket->flush();
-    qDebug() << "NetworkClient: sent packet" << dataSize << "bytes type:" << type;
+    qDebug() << "NetworkClient: 发送数据包" << dataSize << "字节, 类型:" << type;
     return true;
 }
 
@@ -203,16 +203,16 @@ void NetworkClient::onConnected()
     m_autoReconnect = true;
     m_receiveBuffer.clear();
     m_expectedSize = 0;
-    qDebug() << "NetworkClient: connected";
+    qDebug() << "NetworkClient: 已连接到服务器";
     emit connected();
 }
 
 void NetworkClient::onDisconnected()
 {
-    qDebug() << "NetworkClient: disconnected";
+    qDebug() << "NetworkClient: 与服务器断开连接";
     emit disconnected();
 
-    // Auto reconnect
+    // 自动重连
     if (m_autoReconnect && !m_host.isEmpty() && m_port > 0) {
         tryReconnect();
     }
@@ -228,14 +228,14 @@ void NetworkClient::onError(QAbstractSocket::SocketError socketError)
 {
     Q_UNUSED(socketError);
     m_lastError = m_socket->errorString();
-    qDebug() << "NetworkClient: 网络err:" << m_lastError;
+    qDebug() << "NetworkClient: 网络错误:" << m_lastError;
     emit errorOccurred(m_lastError);
 }
 
 void NetworkClient::onReconnectTimer()
 {
     if (!isConnected() && m_autoReconnect) {
-        qDebug() << "NetworkClient: reconnect...";
+        qDebug() << "NetworkClient: 尝试重连...";
         m_socket->connectToHost(m_host, m_port);
     }
 }
@@ -243,7 +243,7 @@ void NetworkClient::onReconnectTimer()
 void NetworkClient::parseReceivedData()
 {
     while (m_receiveBuffer.size() >= PACKET_HEADER_SIZE) {
-        // Parse header
+        // 解析包头
         QDataStream stream(m_receiveBuffer);
         stream.setByteOrder(QDataStream::BigEndian);
 
@@ -252,28 +252,28 @@ void NetworkClient::parseReceivedData()
         stream >> dataSize;
         packetType = (quint8)m_receiveBuffer.at(4);
 
-        // Full packet?
+        // 检查是否收到完整数据包
         if (m_receiveBuffer.size() < (int)(PACKET_HEADER_SIZE + dataSize)) {
-            break;  // wait for more data
+            break;  // 数据不完整，等待更多数据
         }
 
-        // Payload
+        // 提取数据内容
         QByteArray content = m_receiveBuffer.mid(PACKET_HEADER_SIZE, dataSize);
 
-        // Consume
+        // 移除已处理的数据
         m_receiveBuffer.remove(0, PACKET_HEADER_SIZE + dataSize);
 
-        // Result packet
+        // 处理识别结果
         if (packetType == PACKET_TYPE_RESULT) {
-            // Parse JSON
+            // 解析JSON格式结果
             QString jsonStr = QString::fromUtf8(content);
-            qDebug() << "NetworkClient: Result:" << jsonStr;
+            qDebug() << "NetworkClient: 收到识别结果:" << jsonStr;
 
             RecognizeResult result;
             result.success = jsonStr.contains("\"success\":true") ||
                               jsonStr.contains("\"success\": true");
 
-            // Regex JSON parse
+            // 简单解析JSON（避免依赖QJsonDocument）
             QRegularExpression plateRegex("\"plate_number\"\\s*:\\s*\"([^\"]+)\"");
             QRegularExpression confRegex("\"confidence\"\\s*:\\s*([0-9.]+)");
             QRegularExpression errorRegex("\"error\"\\s*:\\s*\"([^\"]+)\"");
@@ -296,7 +296,7 @@ void NetworkClient::parseReceivedData()
             emit recognizeResultReady(result);
         } else if (packetType == PACKET_TYPE_AUDIO) {
             if (content.size() < 4) {
-                qDebug() << "NetworkClient: audio packet too short";
+                qDebug() << "NetworkClient: 音频数据包过短";
                 continue;
             }
 
@@ -306,7 +306,7 @@ void NetworkClient::parseReceivedData()
             quint32 headerSize = 0;
             audioStream >> headerSize;
             if (content.size() < 4 + static_cast<int>(headerSize)) {
-                qDebug() << "NetworkClient: audio header incomplete";
+                qDebug() << "NetworkClient: 音频头不完整";
                 continue;
             }
 
@@ -319,7 +319,7 @@ void NetworkClient::parseReceivedData()
                 fileName = QString("audio_%1.wav").arg(QDateTime::currentMSecsSinceEpoch());
             }
 
-            qDebug() << "NetworkClient: audio file" << fileName << "size:" << audioData.size();
+            qDebug() << "NetworkClient: 收到语音文件" << fileName << "大小:" << audioData.size();
             emit audioFileReady(fileName, audioData);
         }
     }
@@ -328,7 +328,7 @@ void NetworkClient::parseReceivedData()
 void NetworkClient::tryReconnect()
 {
     if (!m_reconnectTimer->isActive()) {
-        qDebug() << "NetworkClient: reconnect in" << m_reconnectInterval / 1000 << "s";
+        qDebug() << "NetworkClient:" << m_reconnectInterval / 1000 << "秒后尝试重连";
         m_reconnectTimer->start(m_reconnectInterval);
     }
 }

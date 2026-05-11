@@ -87,21 +87,21 @@ QImage VideoThread::takeLatestFrame()
 void VideoThread::run()
 {
     if (!m_camera) {
-        qDebug() << "VideoThread: no camera";
+        qDebug() << "VideoThread: 摄像头未设置";
         return;
     }
 
-    // STREAMON
+    // 启动摄像头采集
     if (!m_camera->startCapture()) {
-        qDebug() << "VideoThread: start failed:" << m_camera->lastError();
+        qDebug() << "VideoThread: 启动采集失败:" << m_camera->lastError();
         return;
     }
 
     m_running = true;
-    qDebug() << "VideoThread: streaming";
+    qDebug() << "VideoThread: 开始采集";
 
     while (m_running) {
-        // Grab frame
+        // 采集一帧
         QByteArray rawFrame;
         QImage frame = m_camera->grabFrame(1000, &rawFrame);
         if (!frame.isNull()) {
@@ -127,5 +127,5 @@ void VideoThread::run()
     }
 
     m_camera->stopCapture();
-    qDebug() << "VideoThread: stopped";
+    qDebug() << "VideoThread: 采集停止";
 }

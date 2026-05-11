@@ -14,10 +14,10 @@
 #include "../database/database.h"
 
 /**
- * @brief History browser
+ * @brief 车辆记录查询窗口
  *
- * Filter by plate/date/state
- * Table + pager
+ * 支持按车牌号、日期、状态筛选
+ * 显示表格和分页功能
  */
 class QueryWindow : public QMainWindow
 {
@@ -29,7 +29,7 @@ public:
 
 signals:
     /**
-     * @brief Back to main
+     * @brief 返回主界面信号
      */
     void backToMain();
 
@@ -47,32 +47,32 @@ private:
     void updatePagination();
     void updateTable(const QList<ParkingRecord> &records);
 
-    // Filters
+    // 查询条件
     QLineEdit *m_plateEdit;
     QDateEdit *m_dateEdit;
     QComboBox *m_statusCombo;
 
-    // Table
+    // 表格
     QTableWidget *m_table;
 
-    // Pagination
+    // 分页
     QLabel *m_totalLabel;
     QWidget *m_pageButtons;
     QPushButton *m_prevBtn;
     QPushButton *m_nextBtn;
     QList<QPushButton*> m_pageBtns;
 
-    // State
+    // 数据
     Database *m_db;
     int m_currentPage;
     int m_totalPages;
     int m_pageSize;
     int m_totalRecords;
 
-    // Active filters
+    // 当前查询条件
     QString m_queryPlate;
     QDate m_queryDate;
-    int m_queryStatus; // -1 all, 0 parked, 1 exited
+    int m_queryStatus; // -1:全部, 0:停车中, 1:已出库
 };
 
 #endif // QUERYWINDOW_H

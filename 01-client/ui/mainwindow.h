@@ -26,9 +26,9 @@
 class HardwareInit;
 
 /**
- * @brief Main shell
+ * @brief 主窗口类
  *
- * Video, occupancy, gate, recent activity
+ * 显示实时视频、车位状态、闸门状态、最近进场记录
  */
 class MainWindow : public QMainWindow
 {
@@ -39,7 +39,7 @@ public:
     ~MainWindow();
 
     /**
-     * @brief Init camera pipeline
+     * @brief 初始化硬件
      */
     bool initHardware();
 
@@ -55,7 +55,7 @@ private slots:
     void onQueryBack();
     void onSettingsBack();
 
-    // Video / network slots
+    // 视频相关槽函数
     void refreshVideoFrame();
     void onCaptureDone(const QImage &image, const QByteArray &rawFrame);
     void onRecognizeResultReady(const NetworkClient::RecognizeResult &result);
@@ -92,46 +92,46 @@ private:
     QGroupBox* createRecentPanel();
     QWidget* createBottomBar();
 
-    // Header
+    // 顶部区域
     QLabel *m_titleLabel;
     QLabel *m_timeLabel;
 
-    // Video preview
+    // 视频区域
     QLabel *m_videoLabel;
 
-    // Parking status
+    // 车位状态
     QLabel *m_totalSpacesLabel;
     QLabel *m_parkedLabel;
     QLabel *m_availableLabel;
     QProgressBar *m_occupancyBar;
 
-    // Gate
+    // 闸门状态
     QLabel *m_gateStatusLabel;
 
-    // Recent records
+    // 最近进场
     QListWidget *m_recentList;
 
-    // Timers
+    // 定时器
     QTimer *m_updateTimer;
     QTimer *m_videoRefreshTimer;
     QTimer *m_recognitionTimer;
     QTimer *m_gateCloseTimer;
 
-    // State库
+    // 数据库
     Database *m_db;
 
-    // Child windows
+    // 子窗口
     QueryWindow *m_queryWindow;
     SettingsWindow *m_settingsWindow;
     ExitDialog *m_exitDialog;
     AudioThread *m_audioThread;
 
-    // Capture
+    // 视频相关
     V4L2Camera *m_camera;
     VideoThread *m_videoThread;
     RfidThread *m_rfidThread;
 
-    // TCP client
+    // 网络相关
     NetworkClient *m_networkClient;
     bool m_waitingForResult;
     QString m_pendingRfidCard;
@@ -145,7 +145,7 @@ private:
     QDateTime m_gateOpenUntil;
     QString m_gateOpenReason;
 
-    // Board hardware ref
+    // 硬件管理（外部传入）
     HardwareInit *m_hardware;
 };
 

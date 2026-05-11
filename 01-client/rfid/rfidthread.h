@@ -7,10 +7,10 @@
 class SerialPort;
 
 /**
- * @brief RFID reader thread
+ * @brief RFID监听线程
  *
- * Parses UART frames into 10-digit IDs.
- * ID = last 10 digits before '@'.
+ * 串口持续读取RFID模块输出，解析 "记卡：0008038796@" 格式的卡号并发出信号。
+ * 新模块格式：卡号为@之前的10位数字。
  */
 class RfidThread : public QThread
 {

@@ -11,10 +11,10 @@
 #include <QPixmap>
 
 /**
- * @brief Manual entry confirm
+ * @brief 入场确认对话框
  *
- * Shows capture + LPR fields
- * Allows plate edit
+ * 显示抓拍图片、识别结果、RFID卡号、置信度
+ * 支持车牌修正输入，确认入场/取消操作
  */
 class EntryDialog : public QDialog
 {
@@ -25,47 +25,47 @@ public:
     ~EntryDialog();
 
     /**
-     * @brief setImage
+     * @brief 设置抓拍图片
      */
     void setImage(const QPixmap &image);
 
     /**
-     * @brief setRecognitionResult
-     * @param plateNumber
-     * @param rfidCard
-     * @param confidence 0-100
+     * @brief 设置识别结果
+     * @param plateNumber 车牌号
+     * @param rfidCard RFID卡号
+     * @param confidence 置信度(0-100)
      */
     void setRecognitionResult(const QString &plateNumber, const QString &rfidCard, double confidence);
 
     /**
-     * @brief setEntryTime
+     * @brief 设置入场时间
      */
     void setEntryTime(const QDateTime &time);
 
     /**
-     * @brief edited plate
+     * @brief 获取确认的车牌号
      */
     QString getPlateNumber() const;
 
     /**
-     * @brief rfid getter
+     * @brief 获取RFID卡号
      */
     QString getRfidCard() const;
 
     /**
-     * @brief countdown
-     * @param seconds or 0
+     * @brief 启用自动确认倒计时
+     * @param seconds 倒计时秒数，0表示禁用
      */
     void startCountdown(int seconds = 10);
 
 signals:
     /**
-     * @brief confirmed
+     * @brief 确认入场信号
      */
     void confirmed();
 
     /**
-     * @brief cancelled
+     * @brief 取消/重新抓拍信号
      */
     void cancelled();
 
@@ -78,29 +78,29 @@ private:
     void setupUI();
     void updateCountdownDisplay();
 
-    // Image
+    // 图片区域
     QLabel *m_imageLabel;
     QLabel *m_imageTimeLabel;
 
-    // LPR panel
+    // 识别结果区域
     QLabel *m_plateLabel;
     QLabel *m_rfidLabel;
     QProgressBar *m_confidenceBar;
     QLabel *m_confidenceLabel;
 
-    // Plate edit
+    // 车牌修正输入
     QLineEdit *m_plateEdit;
 
-    // Buttons
+    // 按钮
     QPushButton *m_confirmBtn;
     QPushButton *m_cancelBtn;
 
-    // Timer
+    // 倒计时
     QLabel *m_countdownLabel;
     QTimer *m_countdownTimer;
     int m_countdownValue;
 
-    // State
+    // 数据
     QString m_rfidCard;
     QDateTime m_entryTime;
 };

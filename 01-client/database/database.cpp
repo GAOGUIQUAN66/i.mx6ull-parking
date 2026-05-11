@@ -23,7 +23,7 @@ bool Database::open(const QString &path)
     m_db.setDatabaseName(path);
 
     if (!m_db.open()) {
-        m_lastError = QString("Cannot open database: %1").arg(m_db.lastError().text());
+        m_lastError = QString("无法打开数据库: %1").arg(m_db.lastError().text());
         return false;
     }
 
@@ -56,7 +56,7 @@ bool Database::createTables()
 {
     QSqlQuery query(m_db);
 
-    // Table: vehicle
+    // 创建车辆信息表
     if (!query.exec(
         "CREATE TABLE IF NOT EXISTS vehicle ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -67,22 +67,22 @@ bool Database::createTables()
         "status INTEGER DEFAULT 0, "
         "total_fee REAL DEFAULT 0.0"
         ")")) {
-        m_lastError = QString("create vehicle failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建vehicle表失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Table: parking_config
+    // 创建停车位配置表
     if (!query.exec(
         "CREATE TABLE IF NOT EXISTS parking_config ("
         "id INTEGER PRIMARY KEY, "
         "total_spaces INTEGER DEFAULT 50, "
         "hourly_rate REAL DEFAULT 5.0"
         ")")) {
-        m_lastError = QString("create parking_config failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建parking_config表失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Table: history
+    // 创建历史记录表
     if (!query.exec(
         "CREATE TABLE IF NOT EXISTS history ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -93,11 +93,11 @@ bool Database::createTables()
         "duration INTEGER, "
         "fee REAL"
         ")")) {
-        m_lastError = QString("create history failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建history表失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Table: blacklist
+    // 创建黑名单表（非法车辆）
     if (!query.exec(
         "CREATE TABLE IF NOT EXISTS blacklist ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -105,11 +105,11 @@ bool Database::createTables()
         "reason TEXT, "
         "added_time DATETIME DEFAULT CURRENT_TIMESTAMP"
         ")")) {
-        m_lastError = QString("create blacklist failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建blacklist表失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Table: rfid_account
+    // 创建RFID账户表
     if (!query.exec(
         "CREATE TABLE IF NOT EXISTS rfid_account ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -117,7 +117,7 @@ bool Database::createTables()
         "balance REAL DEFAULT 100.0, "
         "created_time DATETIME DEFAULT CURRENT_TIMESTAMP"
         ")")) {
-        m_lastError = QString("create rfid_account failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建rfid_account表失败: %1").arg(query.lastError().text());
         return false;
     }
 
@@ -137,7 +137,7 @@ int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
 {
     VehicleInfo activeVehicle = queryActiveVehicle(plateNumber);
     if (activeVehicle.id != 0) {
-        m_lastError = QString("Vehicle %1 already inside").arg(plateNumber);
+        m_lastError = QString("车辆 %1 已在库中").arg(plateNumber);
         return -1;
     }
 
@@ -149,7 +149,7 @@ int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
     query.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
 
     if (!query.exec()) {
-        m_lastError = QString("addVehicle failed: %1").arg(query.lastError().text());
+        m_lastError = QString("添加车辆失败: %1").arg(query.lastError().text());
         return -1;
     }
 
@@ -159,7 +159,7 @@ int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
 bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCard)
 {
     if (rfidCard.isEmpty()) {
-        m_lastError = "Exit requires RFID swipe";
+        m_lastError = "出库必须刷卡";
         return false;
     }
 
@@ -169,12 +169,12 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
 
     QSqlQuery query(m_db);
 
-    // Entry time
+    // 获取入库时间
     query.prepare("SELECT id, rfid_card, entry_time FROM vehicle "
                   "WHERE plate_number = ? AND status = 0 ORDER BY id DESC LIMIT 1");
     query.addBindValue(plateNumber);
     if (!query.exec() || !query.next()) {
-        m_lastError = QString("Vehicle record not found: %1").arg(plateNumber);
+        m_lastError = QString("未找到车辆记录: %1").arg(plateNumber);
         return false;
     }
 
@@ -183,14 +183,14 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
     QDateTime exitTime = QDateTime::currentDateTime();
     double fee = calculateFee(entryTime, exitTime);
     qint64 durationMinutes = (entryTime.secsTo(exitTime) + 59) / 60;
-    int duration = qMax(1, static_cast<int>(durationMinutes));  // minutes, rounded up
+    int duration = qMax(1, static_cast<int>(durationMinutes));  // 分钟，向上取整
 
     double balance = getCardBalance(rfidCard);
     if (balance < 0) {
         return false;
     }
     if (balance < fee) {
-        m_lastError = QString("RFID %1 insufficient balance: %2 CNY, need %3 CNY")
+        m_lastError = QString("RFID卡 %1 余额不足，当前余额 %2 元，需支付 %3 元")
             .arg(rfidCard)
             .arg(balance, 0, 'f', 2)
             .arg(fee, 0, 'f', 2);
@@ -198,7 +198,7 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
     }
 
     if (!m_db.transaction()) {
-        m_lastError = QString("checkout tx begin failed: %1").arg(m_db.lastError().text());
+        m_lastError = QString("出库事务开启失败: %1").arg(m_db.lastError().text());
         return false;
     }
 
@@ -207,11 +207,11 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
     query.addBindValue(rfidCard);
     if (!query.exec()) {
         m_db.rollback();
-        m_lastError = QString("deduct failed: %1").arg(query.lastError().text());
+        m_lastError = QString("扣费失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Update vehicle
+    // 更新车辆记录
     query.prepare("UPDATE vehicle SET rfid_card = ?, exit_time = ?, status = 1, total_fee = ? "
                   "WHERE id = ?");
     query.addBindValue(rfidCard);
@@ -221,11 +221,11 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
 
     if (!query.exec()) {
         m_db.rollback();
-        m_lastError = QString("update vehicle failed: %1").arg(query.lastError().text());
+        m_lastError = QString("更新车辆状态失败: %1").arg(query.lastError().text());
         return false;
     }
 
-    // Insert history
+    // 添加历史记录
     query.prepare("INSERT INTO history (plate_number, rfid_card, entry_time, exit_time, duration, fee) "
                   "VALUES (?, ?, ?, ?, ?, ?)");
     query.addBindValue(plateNumber);
@@ -236,12 +236,12 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
     query.addBindValue(fee);
     if (!query.exec()) {
         m_db.rollback();
-        m_lastError = QString("insert history failed: %1").arg(query.lastError().text());
+        m_lastError = QString("写入历史记录失败: %1").arg(query.lastError().text());
         return false;
     }
 
     if (!m_db.commit()) {
-        m_lastError = QString("checkout tx commit failed: %1").arg(m_db.lastError().text());
+        m_lastError = QString("出库事务提交失败: %1").arg(m_db.lastError().text());
         return false;
     }
 
@@ -368,7 +368,7 @@ bool Database::updateConfig(const ParkingConfig &config)
     query.addBindValue(config.hourlyRate);
 
     if (!query.exec()) {
-        m_lastError = QString("update config failed: %1").arg(query.lastError().text());
+        m_lastError = QString("更新配置失败: %1").arg(query.lastError().text());
         return false;
     }
     return true;
@@ -381,15 +381,15 @@ double Database::calculateFee(const QDateTime &entryTime, const QDateTime &exitT
         return 0.0;
     }
 
-    // Fee: 0.1 CNY per minute
-    int minutes = (seconds + 59) / 60; // round up
+    // 计费规则: 1分钟0.1元
+    int minutes = (seconds + 59) / 60; // 向上取整
     return minutes * 0.1;
 }
 
 bool Database::ensureCardAccount(const QString &rfidCard, double initialBalance)
 {
     if (rfidCard.isEmpty()) {
-        m_lastError = "RFID card id empty";
+        m_lastError = "RFID卡号不能为空";
         return false;
     }
 
@@ -399,7 +399,7 @@ bool Database::ensureCardAccount(const QString &rfidCard, double initialBalance)
     query.addBindValue(initialBalance);
 
     if (!query.exec()) {
-        m_lastError = QString("create RFID account failed: %1").arg(query.lastError().text());
+        m_lastError = QString("创建RFID账户失败: %1").arg(query.lastError().text());
         return false;
     }
 
@@ -409,7 +409,7 @@ bool Database::ensureCardAccount(const QString &rfidCard, double initialBalance)
 double Database::getCardBalance(const QString &rfidCard)
 {
     if (rfidCard.isEmpty()) {
-        m_lastError = "RFID card id empty";
+        m_lastError = "RFID卡号不能为空";
         return -1.0;
     }
 
@@ -421,7 +421,7 @@ double Database::getCardBalance(const QString &rfidCard)
     query.prepare("SELECT balance FROM rfid_account WHERE rfid_card = ?");
     query.addBindValue(rfidCard);
     if (!query.exec() || !query.next()) {
-        m_lastError = QString("query RFID balance failed: %1").arg(query.lastError().text());
+        m_lastError = QString("查询RFID卡余额失败: %1").arg(query.lastError().text());
         return -1.0;
     }
 
@@ -450,7 +450,7 @@ QList<ParkingRecord> Database::queryHistory(const QDate &startDate, const QDate 
     }
 
     if (!query.exec()) {
-        m_lastError = QString("query history failed: %1").arg(query.lastError().text());
+        m_lastError = QString("查询历史记录失败: %1").arg(query.lastError().text());
         return list;
     }
 
@@ -562,10 +562,10 @@ bool Database::migrateVehicleTableIfNeeded()
         return true;
     }
 
-    qDebug() << "Database: migrating vehicle table (drop RFID UNIQUE)";
+    qDebug() << "Database: 迁移vehicle表，移除RFID唯一约束";
 
     if (!m_db.transaction()) {
-        m_lastError = QString("migrate tx begin failed: %1").arg(m_db.lastError().text());
+        m_lastError = QString("开启数据库迁移事务失败: %1").arg(m_db.lastError().text());
         return false;
     }
 
@@ -587,13 +587,13 @@ bool Database::migrateVehicleTableIfNeeded()
     for (int i = 0; i < sqlList.size(); ++i) {
         if (!query.exec(sqlList[i])) {
             m_db.rollback();
-            m_lastError = QString("migrate vehicle failed: %1").arg(query.lastError().text());
+            m_lastError = QString("迁移vehicle表失败: %1").arg(query.lastError().text());
             return false;
         }
     }
 
     if (!m_db.commit()) {
-        m_lastError = QString("migrate commit failed: %1").arg(m_db.lastError().text());
+        m_lastError = QString("提交vehicle表迁移失败: %1").arg(m_db.lastError().text());
         return false;
     }
 

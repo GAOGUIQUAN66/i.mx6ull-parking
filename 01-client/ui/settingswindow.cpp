@@ -4,7 +4,7 @@
 #include <QTimer>
 #include <QDebug>
 
-// Colors
+// 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
 #define COLOR_BG_PANEL "#16213e"
 #define COLOR_ACCENT "#e94560"
@@ -16,7 +16,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_testSocket(nullptr)
 {
-    setWindowTitle("Settings");
+    setWindowTitle("系统设置");
     setFixedSize(1024, 600);
     setStyleSheet(QString(
         "QMainWindow { background-color: %1; }"
@@ -59,7 +59,7 @@ void SettingsWindow::setupUI()
     mainLayout->setSpacing(20);
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // Header
+    // 顶部栏
     QWidget *header = new QWidget();
     header->setFixedHeight(50);
     header->setStyleSheet(QString("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #0f3460); border-bottom: 2px solid %2;").arg(COLOR_BG_PANEL, COLOR_ACCENT));
@@ -67,7 +67,7 @@ void SettingsWindow::setupUI()
     QHBoxLayout *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(20, 0, 20, 0);
 
-    QLabel *titleLabel = new QLabel("Settings - 网络配置");
+    QLabel *titleLabel = new QLabel("系统设置 - 网络配置");
     titleLabel->setStyleSheet(QString("font-size: 20px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
 
     QPushButton *backBtn = new QPushButton("← 返回主界面");
@@ -79,7 +79,7 @@ void SettingsWindow::setupUI()
     headerLayout->addWidget(backBtn);
     mainLayout->addWidget(header);
 
-    // Main content
+    // 主内容区
     QWidget *contentArea = new QWidget();
     contentArea->setStyleSheet("padding: 30px;");
     QVBoxLayout *contentLayout = new QVBoxLayout(contentArea);

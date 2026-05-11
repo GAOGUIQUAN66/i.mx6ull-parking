@@ -22,7 +22,7 @@ HardwareInit::~HardwareInit()
 
 bool HardwareInit::initAll(const Config &config)
 {
-    // Serial
+    // 初始化串口
     if (!config.serialDevice.isEmpty()) {
         if (!initSerial(config.serialDevice, config.serialBaudRate)) {
             emit initFinished(false);
@@ -30,7 +30,7 @@ bool HardwareInit::initAll(const Config &config)
         }
     }
 
-    // Init camera
+    // 初始化摄像头
     if (!config.cameraDevice.isEmpty()) {
         if (!initCamera(config.cameraDevice, config.cameraWidth, config.cameraHeight)) {
             emit initFinished(false);
@@ -38,7 +38,7 @@ bool HardwareInit::initAll(const Config &config)
         }
     }
 
-    // Audio
+    // 初始化音频
     if (!config.audioDevice.isEmpty()) {
         if (!initAudio(config.audioDevice, config.audioSampleRate, config.audioChannels)) {
             emit initFinished(false);
@@ -46,7 +46,7 @@ bool HardwareInit::initAll(const Config &config)
         }
     }
 
-    // Beeper
+    // 初始化蜂鸣器
     if (!config.beeperPath.isEmpty()) {
         if (!initBeeper(config.beeperPath)) {
             emit initFinished(false);
@@ -63,7 +63,7 @@ bool HardwareInit::initSerial(const QString &device, int baudRate)
 {
     m_serial = new SerialPort(this);
     if (!m_serial->open(device, baudRate)) {
-        m_lastError = QString("Serial init failed: %1").arg(m_serial->lastError());
+        m_lastError = QString("串口初始化失败: %1").arg(m_serial->lastError());
         delete m_serial;
         m_serial = nullptr;
         return false;
@@ -75,35 +75,35 @@ bool HardwareInit::initCamera(const QString &device, int width, int height)
 {
     m_camera = new V4L2Camera(this);
     if (!m_camera->open(device)) {
-        m_lastError = QString("Camera init failed: %1").arg(m_camera->lastError());
+        m_lastError = QString("摄像头初始化失败: %1").arg(m_camera->lastError());
         delete m_camera;
         m_camera = nullptr;
         return false;
     }
 
-    // OV5671: RGBP/JPEG/YUYV
-    // Priority JPEG > RGB565 > YUYV
-    // 1) JPEG
+    // OV5671摄像头支持: RGBP(RGB565)、JPEG、YUYV
+    // 优先级: JPEG > RGB565 > YUYV (避免UYVY转换问题)
+    // 1. 优先尝试JPEG格式（Qt直接解码，颜色正确）
     if (m_camera->setFormat(width, height, V4L2Camera::FORMAT_JPEG)) {
-        qDebug() << "Camera OK (JPEG)";
+        qDebug() << "摄像头初始化成功，使用JPEG格式";
     }
-    // 2) RGB565
+    // 2. JPEG失败则尝试RGB565
     else if (m_camera->setFormat(width, height, V4L2Camera::FORMAT_RGB565)) {
-        qDebug() << "Camera OK (RGB565)";
+        qDebug() << "摄像头初始化成功，使用RGB565格式";
     }
-    // 3) YUYV
+    // 3. RGB565失败则尝试YUYV
     else if (m_camera->setFormat(width, height, V4L2Camera::FORMAT_YUYV)) {
-        qDebug() << "Camera OK (YUYV)";
+        qDebug() << "摄像头初始化成功，使用YUYV格式";
     }
     else {
-        m_lastError = QString("setFormat failed: %1").arg(m_camera->lastError());
+        m_lastError = QString("设置摄像头格式失败: %1").arg(m_camera->lastError());
         delete m_camera;
         m_camera = nullptr;
         return false;
     }
 
     if (!m_camera->requestBuffers(4)) {
-        m_lastError = QString("Camera REQBUFS failed: %1").arg(m_camera->lastError());
+        m_lastError = QString("申请摄像头缓冲区失败: %1").arg(m_camera->lastError());
         delete m_camera;
         m_camera = nullptr;
         return false;
@@ -116,14 +116,14 @@ bool HardwareInit::initAudio(const QString &device, unsigned int sampleRate, uns
 {
     m_audio = new AlsaAudio(this);
     if (!m_audio->open(device)) {
-        m_lastError = QString("Audio open failed: %1").arg(m_audio->lastError());
+        m_lastError = QString("音频设备初始化失败: %1").arg(m_audio->lastError());
         delete m_audio;
         m_audio = nullptr;
         return false;
     }
 
     if (!m_audio->setParams(sampleRate, channels)) {
-        m_lastError = QString("Audio params failed: %1").arg(m_audio->lastError());
+        m_lastError = QString("设置音频参数失败: %1").arg(m_audio->lastError());
         delete m_audio;
         m_audio = nullptr;
         return false;
@@ -136,7 +136,7 @@ bool HardwareInit::initBeeper(const QString &path)
 {
     m_beeper = new Beeper(this);
     if (!m_beeper->init(path)) {
-        m_lastError = QString("Beeper init failed: %1").arg(m_beeper->lastError());
+        m_lastError = QString("蜂鸣器初始化失败: %1").arg(m_beeper->lastError());
         delete m_beeper;
         m_beeper = nullptr;
         return false;

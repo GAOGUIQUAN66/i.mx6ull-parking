@@ -42,7 +42,7 @@ void AudioThread::run()
         emit playbackStarted(filePath);
         int exitCode = QProcess::execute("aplay", QStringList() << "-D" << "default" << filePath);
         if (exitCode != 0) {
-            QString error = QString("aplay failed, exit %1").arg(exitCode);
+            QString error = QString("aplay 播放失败，退出码 %1").arg(exitCode);
             qDebug() << "AudioThread:" << error << filePath;
             emit playbackError(filePath, error);
             continue;

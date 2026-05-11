@@ -20,13 +20,13 @@ bool Beeper::init(const QString &ledPath)
 
     QFile file(m_ledPath);
     if (!file.exists()) {
-        m_lastError = QString("Beeper missing: %1").arg(m_ledPath);
+        m_lastError = QString("蜂鸣器设备不存在: %1").arg(m_ledPath);
         return false;
     }
 
     m_initialized = true;
 
-    // Start off
+    // 初始状态关闭
     off();
 
     return true;
@@ -35,7 +35,7 @@ bool Beeper::init(const QString &ledPath)
 bool Beeper::setState(State state)
 {
     if (!m_initialized) {
-        m_lastError = "Beeper not init";
+        m_lastError = "蜂鸣器未初始化";
         return false;
     }
 
@@ -89,7 +89,7 @@ bool Beeper::writeBrightness(int value)
 {
     QFile file(m_ledPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        m_lastError = QString("Cannot open beeper: %1").arg(file.errorString());
+        m_lastError = QString("无法打开蜂鸣器设备: %1").arg(file.errorString());
         return false;
     }
 

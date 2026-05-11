@@ -9,11 +9,11 @@
 #include <QJsonObject>
 
 /**
- * @brief TCP client
+ * @brief 网络通信客户端
  *
- * Talks to Python LPR host:
- * - uplink frames
- * - JSON results + WAV
+ * 负责与Ubuntu上位机的TCP通信：
+ * - 发送抓拍图像
+ * - 接收车牌识别结果
  */
 class NetworkClient : public QObject
 {
@@ -21,101 +21,101 @@ class NetworkClient : public QObject
 
 public:
     /**
-     * @brief Parsed JSON
+     * @brief 识别结果结构体
      */
     struct RecognizeResult {
-        QString plateNumber;    // plate
-        double confidence;      // score
-        bool success;           // ok flag
-        QString errorMessage;   // error text
+        QString plateNumber;    // 车牌号
+        double confidence;      // 置信度
+        bool success;           // 是否识别成功
+        QString errorMessage;   // 错误信息
     };
 
     explicit NetworkClient(QObject *parent = nullptr);
     ~NetworkClient();
 
     /**
-     * @brief connectToHost
-     * @param host
-     * @param port
-     * @return queued ok
+     * @brief 连接到服务器
+     * @param host 服务器地址
+     * @param port 端口号
+     * @return 是否发起连接成功
      */
     bool connectToServer(const QString &host, quint16 port);
 
     /**
-     * @brief disconnect
+     * @brief 断开连接
      */
     void disconnect();
 
     /**
-     * @brief Send QImage
-     * @param image rgb
-     * @return queued ok
+     * @brief 发送图像进行识别
+     * @param image 图像数据
+     * @return 是否发送成功
      */
     bool sendImageForRecognition(const QImage &image);
 
     /**
-     * @brief Send encoded bytes
-     * @param data jpeg/bmp
-     * @return queued ok
+     * @brief 发送原始图像数据进行识别
+     * @param data 原始图像数据（JPEG格式）
+     * @return 是否发送成功
      */
     bool sendRawImage(const QByteArray &data);
 
     /**
-     * @brief Send mmap frame
-     * @param data payload
-     * @param width
-     * @param height
-     * @param pixelFormat tag
-     * @return queued ok
+     * @brief 发送V4L2原始帧进行识别
+     * @param data 原始图像缓冲
+     * @param width 图像宽度
+     * @param height 图像高度
+     * @param pixelFormat 实际像素格式名，如 RGBP/YUYV
+     * @return 是否发送成功
      */
     bool sendRawFrameForRecognition(const QByteArray &data, int width, int height,
                                     const QString &pixelFormat);
 
     /**
-     * @brief Request TTS WAV
-     * @param eventType
-     * @param text utterance
-     * @param fileName local name
+     * @brief 请求服务器生成并下发语音WAV
+     * @param eventType 事件类型，如 entry/exit_wait_card
+     * @param text 需要播报的文本
+     * @param fileName 建议保存的文件名
      */
     bool requestAudio(const QString &eventType, const QString &text, const QString &fileName);
 
     /**
-     * @brief Connected
+     * @brief 是否已连接
      */
     bool isConnected() const;
 
     /**
-     * @brief Last error string
+     * @brief 获取最后错误信息
      */
     QString lastError() const;
 
 signals:
     /**
-     * @brief connected
+     * @brief 连接成功信号
      */
     void connected();
 
     /**
-     * @brief disconnect信号
+     * @brief 断开连接信号
      */
     void disconnected();
 
     /**
-     * @brief recognizeResultReady
-     * @param result struct
+     * @brief 识别结果就绪
+     * @param result 识别结果
      */
     void recognizeResultReady(const RecognizeResult &result);
 
     /**
-     * @brief socket error
-     * @param error QString
+     * @brief 发生错误
+     * @param error 错误信息
      */
     void errorOccurred(const QString &error);
 
     /**
-     * @brief WAV chunk
-     * @param fileName
-     * @param audioData bytes
+     * @brief 收到语音文件
+     * @param fileName 建议保存名
+     * @param audioData wav字节流
      */
     void audioFileReady(const QString &fileName, const QByteArray &audioData);
 
@@ -128,19 +128,19 @@ private slots:
 
 private:
     /**
-     * @brief sendPacket
-     * @param data payload
-     * @param type packet kind
+     * @brief 发送数据包
+     * @param data 数据内容
+     * @param type 数据类型（1=编码图像，2=文本，4=原始图像）
      */
     bool sendPacket(const QByteArray &data, quint8 type);
 
     /**
-     * @brief Reassembly
+     * @brief 解析接收的数据
      */
     void parseReceivedData();
 
     /**
-     * @brief reconnect
+     * @brief 尝试重连
      */
     void tryReconnect();
 
@@ -149,11 +149,11 @@ private:
     quint16 m_port;
     QString m_lastError;
 
-    // RX buffer
+    // 接收缓冲区
     QByteArray m_receiveBuffer;
     quint32 m_expectedSize;
 
-    // reconnect timer
+    // 重连机制
     QTimer *m_reconnectTimer;
     bool m_autoReconnect;
     int m_reconnectInterval;

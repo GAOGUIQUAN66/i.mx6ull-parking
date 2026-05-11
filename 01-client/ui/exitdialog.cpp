@@ -3,7 +3,7 @@
 #include <QHBoxLayout>
 #include <QGroupBox>
 
-// Colors
+// 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
 #define COLOR_BG_PANEL "#16213e"
 #define COLOR_ACCENT "#e94560"
@@ -183,7 +183,7 @@ void ExitDialog::setupUI()
     balanceRow->addStretch();
     balanceRow->addWidget(m_balanceLabel);
 
-    m_statusLabel = new QLabel("Swipe RFID within 10 s to exit");
+    m_statusLabel = new QLabel("请在 10 秒内刷卡完成出场");
     m_statusLabel->setWordWrap(true);
     m_statusLabel->setMinimumHeight(40);
     m_statusLabel->setStyleSheet(QString(

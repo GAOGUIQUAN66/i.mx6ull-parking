@@ -8,9 +8,9 @@
 #include "gpio.h"
 
 /**
- * @brief Board bring-up
+ * @brief 硬件初始化管理类
  *
- * Owns serial/camera/audio/beeper
+ * 统一管理所有硬件设备的初始化和状态
  */
 class HardwareInit : public QObject
 {
@@ -18,27 +18,27 @@ class HardwareInit : public QObject
 
 public:
     /**
-     * @brief Board config
+     * @brief 硬件配置结构体
      */
     struct Config {
-        // UART
+        // 串口配置
         QString serialDevice = "/dev/ttymxc2";
         int serialBaudRate = 115200;
 
-        // CSI camera
+        // 摄像头配置 (IMX6 CSI摄像头)
         QString cameraDevice = "/dev/video1";
         int cameraWidth = 640;
         int cameraHeight = 480;
 
-        // Audio
+        // 音频配置
         QString audioDevice = "default";
         unsigned int audioSampleRate = 44100;
         unsigned int audioChannels = 2;
 
-        // Beeper LED
+        // 蜂鸣器配置
         QString beeperPath = "/sys/class/leds/beep/brightness";
 
-        // State库配置
+        // 数据库配置
         QString dbPath = "/run/media/mmcblk1p1/parking.db";
     };
 
@@ -46,78 +46,78 @@ public:
     ~HardwareInit();
 
     /**
-     * @brief Init subsystems
-     * @param config
-     * @return true on success
+     * @brief 初始化所有硬件
+     * @param config 配置参数
+     * @return 成功返回true
      */
     bool initAll(const Config &config);
 
     /**
-     * @brief Init UART
+     * @brief 初始化串口
      */
     bool initSerial(const QString &device, int baudRate);
 
     /**
-     * @brief Init camera
+     * @brief 初始化摄像头
      */
     bool initCamera(const QString &device, int width, int height);
 
     /**
-     * @brief Init audio
+     * @brief 初始化音频
      */
     bool initAudio(const QString &device, unsigned int sampleRate, unsigned int channels);
 
     /**
-     * @brief Init beeper
+     * @brief 初始化蜂鸣器
      */
     bool initBeeper(const QString &path);
 
     /**
-     * @brief Serial accessor
+     * @brief 获取串口对象
      */
     SerialPort* serialPort();
 
     /**
-     * @brief Camera accessor
+     * @brief 获取摄像头对象
      */
     V4L2Camera* camera();
 
     /**
-     * @brief Audio accessor
+     * @brief 获取音频对象
      */
     AlsaAudio* audio();
 
     /**
-     * @brief Beeper accessor
+     * @brief 获取蜂鸣器对象
      */
     Beeper* beeper();
 
     /**
-     * @brief Alarm pattern
-     * @param count pulses
-     * @param intervalMs gap
+     * @brief 蜂鸣器报警
+     * @param count 鸣叫次数
+     * @param intervalMs 间隔时间（毫秒）
      */
     void alarm(int count = 3, int intervalMs = 200);
 
     /**
-     * @brief Silence alarm
+     * @brief 停止报警
      */
     void stopAlarm();
 
     /**
-     * @brief Init OK flag
+     * @brief 获取初始化状态
      */
     bool isInitialized() const;
 
     /**
-     * @brief Last error string
+     * @brief 获取最后错误信息
      */
     QString lastError() const;
 
 signals:
     /**
-     * @brief initFinished
-     * @param success
+     * @brief 初始化完成信号
+     * @param success 是否成功
      */
     void initFinished(bool success);
 

@@ -5,10 +5,10 @@
 #include <QString>
 
 /**
- * @brief Beeper via sysfs LED
+ * @brief 蜂鸣器控制类（使用Linux LED子系统）
  *
- * sysfs brightness toggle
- * Default /sys/class/leds/beep/brightness
+ * 通过sysfs led接口控制蜂鸣器
+ * 设备节点：/sys/class/leds/beep/brightness
  */
 class Beeper : public QObject
 {
@@ -16,60 +16,60 @@ class Beeper : public QObject
 
 public:
     /**
-     * @brief On/off
+     * @brief 蜂鸣器状态
      */
     enum State {
-        StateOff = 0,   // off
-        StateOn = 1     // on
+        StateOff = 0,   // 关闭
+        StateOn = 1     // 开启
     };
 
     explicit Beeper(QObject *parent = nullptr);
     ~Beeper();
 
     /**
-     * @brief Init beeper
-     * @param ledPath sysfs node
-     * @return true on success
+     * @brief 初始化蜂鸣器
+     * @param ledPath LED设备路径，默认 /sys/class/leds/beep/brightness
+     * @return 成功返回true
      */
     bool init(const QString &ledPath = "/sys/class/leds/beep/brightness");
 
     /**
-     * @brief Set brightness
-     * @param state on/off
-     * @return true on success
+     * @brief 设置蜂鸣器状态
+     * @param state 状态
+     * @return 成功返回true
      */
     bool setState(State state);
 
     /**
-     * @brief On
+     * @brief 开启蜂鸣器
      */
     bool on();
 
     /**
-     * @brief Off
+     * @brief 关闭蜂鸣器
      */
     bool off();
 
     /**
-     * @brief Pulse
-     * @param durationMs
+     * @brief 蜂鸣器鸣叫指定时长
+     * @param durationMs 持续时间（毫秒）
      */
     void beep(int durationMs = 200);
 
     /**
-     * @brief Alarm bursts
-     * @param count pulses
-     * @param intervalMs gap
+     * @brief 报警模式（多次鸣叫）
+     * @param count 鸣叫次数
+     * @param intervalMs 间隔时间（毫秒）
      */
     void alarm(int count = 3, int intervalMs = 200);
 
     /**
-     * @brief Ready flag
+     * @brief 检查是否已初始化
      */
     bool isInitialized() const;
 
     /**
-     * @brief Last error string
+     * @brief 获取最后错误信息
      */
     QString lastError() const;
 
@@ -79,7 +79,7 @@ private:
     QString m_lastError;
 
     /**
-     * @brief sysfs write
+     * @brief 写入brightness文件
      */
     bool writeBrightness(int value);
 };

@@ -10,7 +10,7 @@
 #include <QPixmap>
 #include <QProcess>
 
-// Colors
+// 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
 #define COLOR_BG_PANEL "#16213e"
 #define COLOR_ACCENT "#e94560"
@@ -18,8 +18,8 @@
 #define COLOR_WARNING "#ffd93d"
 #define COLOR_TEXT_GRAY "#a0a0a0"
 
-// Server
-#define SERVER_HOST "192.168.137.121" // Host PC
+// 服务器配置
+#define SERVER_HOST "192.168.137.121" // Ubuntu上位机IP
 #define SERVER_PORT 8888
 #define RFID_VALID_WINDOW_MS 15000
 #define GATE_OPEN_MS 5000
@@ -29,10 +29,10 @@
 MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware)
 {
-    setWindowTitle("Smart Parking");
+    setWindowTitle("智能车库管理系统");
     setFixedSize(1024, 600);
 
-    // Dark theme
+    // 设置深色主题样式
     setStyleSheet(QString(
                       "QMainWindow { background-color: %1; }"
                       "QLabel { color: white; }"
@@ -84,20 +84,20 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     setupUI();
     setupMenuBar();
 
-    // Database
+    // 初始化数据库
     m_db = new Database(this);
     if (!m_db->open("/run/media/mmcblk1p1/parking.db"))
     {
-        qDebug() << "Database open failed:" << m_db->lastError();
+        qDebug() << "数据库打开失败:" << m_db->lastError();
     }
 
-    // Child windows
+    // 初始化子窗口
     m_queryWindow = new QueryWindow(m_db, this);
     m_settingsWindow = new SettingsWindow(this);
     m_exitDialog = new ExitDialog(this);
     m_audioThread = new AudioThread(this);
 
-    // Signals
+    // 连接子窗口信号
     connect(m_queryWindow, &QueryWindow::backToMain, this, &MainWindow::onQueryBack);
     connect(m_settingsWindow, &SettingsWindow::backToMain, this, &MainWindow::onSettingsBack);
     connect(m_exitDialog, &ExitDialog::cancelled, this, &MainWindow::onExitDialogCancelled);
@@ -109,24 +109,24 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     connect(m_audioThread, &AudioThread::playbackError, this, &MainWindow::onAudioPlaybackError);
     m_audioThread->start();
 
-    // Video and network
+    // 初始化视频和网络
     setupVideoThread();
     setupRfidThread();
     setupNetwork();
 
-    // Clock timer
+    // 定时器更新时间
     m_updateTimer = new QTimer(this);
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateTime);
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateParkingStatus);
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateRecentEntries);
     m_updateTimer->start(1000);
 
-    // Video refresh: latest frame only
+    // 单独定时刷新视频，只取最新帧，避免主线程积压旧帧
     m_videoRefreshTimer = new QTimer(this);
     connect(m_videoRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshVideoFrame);
     m_videoRefreshTimer->start(50);
 
-    // Periodic recognition upload
+    // 周期上传识别，取代手动抓拍
     m_recognitionTimer = new QTimer(this);
     connect(m_recognitionTimer, &QTimer::timeout, this, &MainWindow::onRecognitionTimer);
     m_recognitionTimer->start(1500);
@@ -142,7 +142,7 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    // Stop video thread
+    // 停止视频线程
     if (m_videoThread)
     {
         m_videoThread->stop();
@@ -164,14 +164,14 @@ MainWindow::~MainWindow()
         delete m_audioThread;
     }
 
-    // Close camera
+    // 关闭摄像头
     if (m_camera)
     {
         m_camera->close();
         delete m_camera;
     }
 
-    // Disconnect network
+    // 断开网络
     if (m_networkClient)
     {
         m_networkClient->disconnect();
@@ -186,24 +186,24 @@ MainWindow::~MainWindow()
 
 bool MainWindow::initHardware()
 {
-    // Init camera
+    // 初始化摄像头
     m_camera = new V4L2Camera(this);
 
-    // Open camera device
+    // 尝试打开摄像头设备
     QString cameraDevice = "/dev/video1";
     if (!m_camera->open(cameraDevice))
     {
-        qDebug() << "Camera open failed:" << m_camera->lastError();
-        // Try fallback device
+        qDebug() << "摄像头打开失败:" << m_camera->lastError();
+        // 尝试其他设备
         cameraDevice = "/dev/video0";
         if (!m_camera->open(cameraDevice))
         {
-            qDebug() << "Camera open failed:" << m_camera->lastError();
+            qDebug() << "摄像头打开失败:" << m_camera->lastError();
             return false;
         }
     }
 
-    // Prefer raw preview to avoid JPEG decode issues on board
+    // 预览优先使用无需JPEG解码的原始格式，避免板端libjpeg/插件异常导致黑屏
     if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_RGB565))
     {
         if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_YUYV))
@@ -212,42 +212,42 @@ bool MainWindow::initHardware()
             {
                 if (!m_camera->setFormat(640, 480, V4L2Camera::FORMAT_UYVY))
                 {
-                    qDebug() << "setFormat failed:" << m_camera->lastError();
+                    qDebug() << "设置摄像头格式失败:" << m_camera->lastError();
                     return false;
                 }
             }
         }
     }
 
-    // Request buffers
+    // 申请缓冲区
     if (!m_camera->requestBuffers(4))
     {
-        qDebug() << "requestBuffers failed:" << m_camera->lastError();
+        qDebug() << "申请缓冲区失败:" << m_camera->lastError();
         return false;
     }
 
-    qDebug() << "Camera OK, pixel format:" << m_camera->pixelFormatName();
+    qDebug() << "摄像头初始化成功，像素格式:" << m_camera->pixelFormatName();
     return true;
 }
 
 void MainWindow::setupVideoThread()
 {
-    // Init camera hardware
+    // 尝试初始化硬件摄像头
     if (!initHardware())
     {
-        qDebug() << "Camera init failed, video disabled";
-        m_videoLabel->setText("Camera unavailable\n\nCheck device");
+        qDebug() << "摄像头硬件初始化失败，视频功能不可用";
+        m_videoLabel->setText("摄像头连接失败\n\n请检查设备连接");
         return;
     }
 
-    // Video capture thread
+    // 创建视频采集线程
     m_videoThread = new VideoThread(this);
     m_videoThread->setCamera(m_camera);
 
-    // Signals
+    // 连接信号
     connect(m_videoThread, &VideoThread::captureDone, this, &MainWindow::onCaptureDone);
 
-    // Start capture
+    // 启动视频采集
     m_videoThread->start();
 }
 
@@ -255,7 +255,7 @@ void MainWindow::setupRfidThread()
 {
     if (!m_hardware || !m_hardware->serialPort() || !m_hardware->serialPort()->isOpen())
     {
-        qDebug() << "RFID serial not ready, skip RFID thread";
+        qDebug() << "RFID串口未就绪，跳过RFID线程初始化";
         return;
     }
 
@@ -270,14 +270,14 @@ void MainWindow::setupNetwork()
 {
     m_networkClient = new NetworkClient(this);
 
-    // Network signals
+    // 连接网络信号
     connect(m_networkClient, &NetworkClient::connected, this, &MainWindow::onNetworkConnected);
     connect(m_networkClient, &NetworkClient::disconnected, this, &MainWindow::onNetworkDisconnected);
     connect(m_networkClient, &NetworkClient::errorOccurred, this, &MainWindow::onNetworkError);
     connect(m_networkClient, &NetworkClient::recognizeResultReady, this, &MainWindow::onRecognizeResultReady);
     connect(m_networkClient, &NetworkClient::audioFileReady, this, &MainWindow::onAudioFileReady);
 
-    // Connect to server
+    // 连接服务器
     m_networkClient->connectToServer(SERVER_HOST, SERVER_PORT);
 }
 
@@ -290,9 +290,9 @@ void MainWindow::setupUI()
     mainLayout->setSpacing(10);
     mainLayout->setContentsMargins(10, 10, 10, 10);
 
-    // Header
+    // 顶部栏
     QHBoxLayout *headerLayout = new QHBoxLayout();
-    m_titleLabel = new QLabel("Smart Parking");
+    m_titleLabel = new QLabel("智能车库管理系统");
     m_titleLabel->setStyleSheet(QString(
                                     "font-size: 24px; font-weight: bold; color: %1; padding: 5px;")
                                     .arg(COLOR_ACCENT));
@@ -305,35 +305,35 @@ void MainWindow::setupUI()
     headerLayout->addWidget(m_timeLabel);
     mainLayout->addLayout(headerLayout);
 
-    // Main content
+    // 主内容区
     QHBoxLayout *contentLayout = new QHBoxLayout();
     contentLayout->setSpacing(10);
 
-    // Video panel
+    // 视频面板
     QGroupBox *videoGroup = createVideoPanel();
     videoGroup->setFixedWidth(650);
     contentLayout->addWidget(videoGroup);
 
-    // Side panel
+    // 右侧信息面板
     QVBoxLayout *rightLayout = new QVBoxLayout();
     rightLayout->setSpacing(10);
 
-    // Parking status
+    // 车位状态
     QGroupBox *statusGroup = createStatusPanel();
     rightLayout->addWidget(statusGroup);
 
-    // Gate
+    // 闸门状态
     QGroupBox *gateGroup = createGatePanel();
     rightLayout->addWidget(gateGroup);
 
-    // Recent records
+    // 最近进场
     QGroupBox *recentGroup = createRecentPanel();
     rightLayout->addWidget(recentGroup, 1);
 
     contentLayout->addLayout(rightLayout, 1);
     mainLayout->addLayout(contentLayout, 1);
 
-    // Bottom bar
+    // 底部按钮栏
     QWidget *bottomBar = createBottomBar();
     mainLayout->addWidget(bottomBar);
 
@@ -342,12 +342,12 @@ void MainWindow::setupUI()
 
 void MainWindow::setupMenuBar()
 {
-    // No menu bar
+    // 暂不需要菜单栏
 }
 
 QGroupBox *MainWindow::createVideoPanel()
 {
-    QGroupBox *group = new QGroupBox("Live video");
+    QGroupBox *group = new QGroupBox("实时视频监控");
     QVBoxLayout *layout = new QVBoxLayout(group);
 
     m_videoLabel = new QLabel();
@@ -359,7 +359,7 @@ QGroupBox *MainWindow::createVideoPanel()
                                     "border: 2px solid #333;")
                                     .arg(COLOR_BG_DARK, COLOR_BG_PANEL));
     m_videoLabel->setAlignment(Qt::AlignCenter);
-    m_videoLabel->setText("Live camera\n\n640 x 480\nWaiting for stream...");
+    m_videoLabel->setText("摄像头实时画面\n\n640 x 480\n等待视频流...");
 
     layout->addWidget(m_videoLabel);
     return group;
@@ -367,18 +367,18 @@ QGroupBox *MainWindow::createVideoPanel()
 
 QGroupBox *MainWindow::createStatusPanel()
 {
-    QGroupBox *group = new QGroupBox("Parking slots");
+    QGroupBox *group = new QGroupBox("车位状态");
     QHBoxLayout *mainLayout = new QHBoxLayout(group);
 
-    // Numbers
+    // 状态数字
     QVBoxLayout *statusLayout = new QVBoxLayout();
 
     QHBoxLayout *numbersLayout = new QHBoxLayout();
     numbersLayout->setSpacing(20);
 
-    // Total
+    // 总车位
     QVBoxLayout *totalLayout = new QVBoxLayout();
-    QLabel *totalLabel = new QLabel("Total");
+    QLabel *totalLabel = new QLabel("总车位");
     totalLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
     m_totalSpacesLabel = new QLabel("50");
     m_totalSpacesLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
@@ -386,9 +386,9 @@ QGroupBox *MainWindow::createStatusPanel()
     totalLayout->addWidget(totalLabel);
     totalLayout->addWidget(m_totalSpacesLabel);
 
-    // Occupied
+    // 已停放
     QVBoxLayout *parkedLayout = new QVBoxLayout();
-    QLabel *parkedLabel = new QLabel("Parked");
+    QLabel *parkedLabel = new QLabel("已停放");
     parkedLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
     m_parkedLabel = new QLabel("0");
     m_parkedLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_WARNING));
@@ -396,9 +396,9 @@ QGroupBox *MainWindow::createStatusPanel()
     parkedLayout->addWidget(parkedLabel);
     parkedLayout->addWidget(m_parkedLabel);
 
-    // Available
+    // 空余
     QVBoxLayout *availableLayout = new QVBoxLayout();
-    QLabel *availableLabel = new QLabel("Available");
+    QLabel *availableLabel = new QLabel("空余");
     availableLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
     m_availableLabel = new QLabel("50");
     m_availableLabel->setStyleSheet(QString("font-size: 28px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
@@ -413,7 +413,7 @@ QGroupBox *MainWindow::createStatusPanel()
 
     statusLayout->addLayout(numbersLayout);
 
-    // Occupancy bar
+    // 占用率进度条
     m_occupancyBar = new QProgressBar();
     m_occupancyBar->setRange(0, 100);
     m_occupancyBar->setValue(0);
@@ -434,9 +434,9 @@ QGroupBox *MainWindow::createGatePanel()
     gateIcon->setStyleSheet("font-size: 18px; font-weight: bold; color: #e94560;");
 
     QVBoxLayout *infoLayout = new QVBoxLayout();
-    QLabel *gateLabel = new QLabel("Gate");
+    QLabel *gateLabel = new QLabel("闸门状态");
     gateLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
-    m_gateStatusLabel = new QLabel("Closed");
+    m_gateStatusLabel = new QLabel("已关闭");
     m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
     m_gateStatusLabel->setWordWrap(true);
 
@@ -452,7 +452,7 @@ QGroupBox *MainWindow::createGatePanel()
 
 QGroupBox *MainWindow::createRecentPanel()
 {
-    QGroupBox *group = new QGroupBox("Recent");
+    QGroupBox *group = new QGroupBox("近期记录");
     QVBoxLayout *layout = new QVBoxLayout(group);
 
     m_recentList = new QListWidget();
@@ -474,13 +474,13 @@ QWidget *MainWindow::createBottomBar()
     QHBoxLayout *layout = new QHBoxLayout(bar);
     layout->setSpacing(20);
 
-    QPushButton *queryBtn = new QPushButton("Records");
+    QPushButton *queryBtn = new QPushButton("查询记录");
     queryBtn->setStyleSheet(QString(
                                 "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #3db892); "
                                 "color: white;")
                                 .arg(COLOR_SUCCESS));
 
-    QPushButton *settingsBtn = new QPushButton("Settings");
+    QPushButton *settingsBtn = new QPushButton("系统设置");
     settingsBtn->setStyleSheet(QString(
                                    "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #3db892); "
                                    "color: white;")
@@ -559,58 +559,58 @@ void MainWindow::onRfidCardDetected(const QString &cardId)
 {
     if (!m_db || !m_db->isOpen())
     {
-        qDebug() << "RFID ignored: DB closed";
+        qDebug() << "RFID事件被忽略，数据库未打开";
         return;
     }
 
     if (!m_db->ensureCardAccount(cardId))
     {
-        qDebug() << "RFID account init failed, card:" << cardId << "err:" << m_db->lastError();
+        qDebug() << "RFID账户初始化失败, 卡号:" << cardId << "错误:" << m_db->lastError();
         return;
     }
 
     double balance = m_db->getCardBalance(cardId);
     if (balance < 0)
     {
-        qDebug() << "RFID balance query failed, card:" << cardId << "err:" << m_db->lastError();
+        qDebug() << "RFID余额查询失败, 卡号:" << cardId << "错误:" << m_db->lastError();
         return;
     }
 
     m_pendingRfidCard = cardId;
     m_pendingRfidTime = QDateTime::currentDateTime();
-    qDebug() << "Exit swipe recorded, card:" << cardId << "balance:" << balance;
+    qDebug() << "记录出场刷卡, 卡号:" << cardId << "当前余额:" << balance;
 
     if (!m_exitDialog || !m_exitDialog->isVisible() || m_pendingExitPlateNumber.isEmpty())
     {
-        qDebug() << "No pending exit, ignoring swipe";
+        qDebug() << "当前无待结算出场车辆，忽略本次刷卡";
         return;
     }
 
-    m_exitDialog->setPaymentInfo("Card OK, validating balance", cardId, balance);
+    m_exitDialog->setPaymentInfo("刷卡成功，正在校验余额并结算", cardId, balance);
 
     if (!m_db->checkoutVehicle(m_pendingExitPlateNumber, cardId))
     {
-        qDebug() << "Checkout failed, plate:" << m_pendingExitPlateNumber
-                 << "card:" << cardId
-                 << "err:" << m_db->lastError();
-        m_exitDialog->setPaymentInfo(QString("Swipe failed: %1").arg(m_db->lastError()), cardId, balance);
+        qDebug() << "出场结算失败, 车牌:" << m_pendingExitPlateNumber
+                 << "刷卡:" << cardId
+                 << "错误:" << m_db->lastError();
+        m_exitDialog->setPaymentInfo(QString("刷卡失败: %1").arg(m_db->lastError()), cardId, balance);
         return;
     }
 
     double remainBalance = m_db->getCardBalance(cardId);
-    qDebug() << "Checkout OK, plate:" << m_pendingExitPlateNumber
-             << "card:" << cardId
-             << "fee:" << m_pendingExitFee
-             << "remaining:" << remainBalance;
+    qDebug() << "出场结算成功, 车牌:" << m_pendingExitPlateNumber
+             << "刷卡:" << cardId
+             << "扣费:" << m_pendingExitFee
+             << "剩余余额:" << remainBalance;
     m_exitDialog->stopCountdown();
     m_exitDialog->setPaymentInfo(
-        QString("Charged ¥%1, balance ¥%2")
+        QString("刷卡成功，已扣费 ¥%1，剩余余额 ¥%2")
             .arg(m_pendingExitFee, 0, 'f', 2)
             .arg(remainBalance, 0, 'f', 2),
         cardId,
         remainBalance);
     markPlateCooldown(m_pendingExitPlateNumber);
-    openGateForPassage(QString("Vehicle %1 exited").arg(m_pendingExitPlateNumber));
+    openGateForPassage(QString("车辆 %1 已出场").arg(m_pendingExitPlateNumber));
     m_pendingExitPlateNumber.clear();
     updateParkingStatus();
     updateRecentEntries();
@@ -620,7 +620,7 @@ void MainWindow::onRfidCardDetected(const QString &cardId)
 
 void MainWindow::onRfidReadError(const QString &error)
 {
-    qDebug() << "RFID读取err:" << error;
+    qDebug() << "RFID读取错误:" << error;
 }
 
 void MainWindow::updateParkingStatus()
@@ -650,7 +650,7 @@ void MainWindow::updateRecentEntries()
     for (const ParkingRecord &record : records)
     {
         bool isExit = record.exitTime.isValid();
-        QString actionText = isExit ? QString::fromUtf8("EXIT") : QString::fromUtf8("ENTRY");
+        QString actionText = isExit ? QString::fromUtf8("↗ 出场") : QString::fromUtf8("↘ 入场");
         QString timeText = isExit ? record.exitTime.toString("MM-dd hh:mm:ss")
                                   : record.entryTime.toString("MM-dd hh:mm:ss");
         QString itemText = QString("%1  %2\n%3")
@@ -664,10 +664,10 @@ void MainWindow::updateRecentEntries()
         m_recentList->addItem(item);
     }
 
-    // Empty hint
+    // 如果没有记录，显示提示
     if (records.isEmpty())
     {
-        m_recentList->addItem("暂无Recent");
+        m_recentList->addItem("暂无近期记录");
     }
 }
 
@@ -688,17 +688,17 @@ void MainWindow::markPlateCooldown(const QString &plateNumber)
 
 void MainWindow::onQueryBack()
 {
-    // Query back
+    // 查询窗口返回
 }
 
 void MainWindow::onSettingsBack()
 {
-    // Settings back
+    // 设置窗口返回
 }
 
 void MainWindow::onExitDialogCancelled()
 {
-    qDebug() << "出场窗口Closed";
+    qDebug() << "出场窗口已关闭";
     if (!m_pendingExitPlateNumber.isEmpty())
     {
         markPlateCooldown(m_pendingExitPlateNumber);
@@ -708,7 +708,7 @@ void MainWindow::onExitDialogCancelled()
 
 void MainWindow::onExitDialogTimedOut()
 {
-    qDebug() << "Exit swipe timeout";
+    qDebug() << "出场等待刷卡超时";
     if (!m_pendingExitPlateNumber.isEmpty())
     {
         markPlateCooldown(m_pendingExitPlateNumber);
@@ -721,7 +721,7 @@ void MainWindow::onGateCloseTimeout()
     setGateOpened(false);
 }
 
-// --- Video slots ---
+// ==================== 视频相关槽函数 ====================
 
 void MainWindow::refreshVideoFrame()
 {
@@ -732,7 +732,7 @@ void MainWindow::refreshVideoFrame()
     if (frame.isNull())
         return;
 
-    // Scale for label
+    // 缩放到显示区域大小
     QPixmap pixmap = QPixmap::fromImage(frame);
     QPixmap scaled = pixmap.scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation);
     m_videoLabel->setPixmap(scaled);
@@ -740,7 +740,7 @@ void MainWindow::refreshVideoFrame()
 
 void MainWindow::onCaptureDone(const QImage &image, const QByteArray &rawFrame)
 {
-    qDebug() << "Capture done, sending raw frame";
+    qDebug() << "抓拍完成，发送原始帧进行识别";
     if (!image.isNull())
     {
         m_lastCapturePixmap = QPixmap::fromImage(image);
@@ -758,8 +758,8 @@ void MainWindow::onCaptureDone(const QImage &image, const QByteArray &rawFrame)
 
         if (!sent)
         {
-            qDebug() << "Send capture failed:" << m_networkClient->lastError();
-            QMessageBox::warning(this, "Send failed", m_networkClient->lastError());
+            qDebug() << "发送抓拍图像失败:" << m_networkClient->lastError();
+            QMessageBox::warning(this, "发送失败", m_networkClient->lastError());
             m_waitingForResult = false;
             resetCaptureFlow();
         }
@@ -768,7 +768,7 @@ void MainWindow::onCaptureDone(const QImage &image, const QByteArray &rawFrame)
     {
         if (!m_networkClient || !m_networkClient->isConnected())
         {
-            QMessageBox::warning(this, "Network", "Not connected to LPR server");
+            QMessageBox::warning(this, "网络错误", "未连接到识别服务器");
         }
         m_waitingForResult = false;
         resetCaptureFlow();
@@ -777,7 +777,7 @@ void MainWindow::onCaptureDone(const QImage &image, const QByteArray &rawFrame)
 
 void MainWindow::onRecognizeResultReady(const NetworkClient::RecognizeResult &result)
 {
-    qDebug() << "Result:" << result.plateNumber << "conf:" << result.confidence;
+    qDebug() << "收到识别结果:" << result.plateNumber << "置信度:" << result.confidence;
 
     if (result.success && !result.plateNumber.isEmpty())
     {
@@ -785,9 +785,9 @@ void MainWindow::onRecognizeResultReady(const NetworkClient::RecognizeResult &re
     }
     else
     {
-        // Recognition failed
-        QString errorMsg = result.errorMessage.isEmpty() ? "LPR failed, retry" : result.errorMessage;
-        qDebug() << "LPR failed, RFID:" << m_pendingRfidCard << "err:" << errorMsg;
+        // 识别失败
+        QString errorMsg = result.errorMessage.isEmpty() ? "车牌识别失败，请重试" : result.errorMessage;
+        qDebug() << "识别失败, RFID卡:" << m_pendingRfidCard << "错误:" << errorMsg;
     }
 
     m_waitingForResult = false;
@@ -795,7 +795,7 @@ void MainWindow::onRecognizeResultReady(const NetworkClient::RecognizeResult &re
 
 void MainWindow::onNetworkConnected()
 {
-    qDebug() << "Connected to LPR server";
+    qDebug() << "已连接到识别服务器";
     if (m_settingsWindow)
     {
         m_settingsWindow->setActualConnectionStatus(true);
@@ -804,7 +804,7 @@ void MainWindow::onNetworkConnected()
 
 void MainWindow::onNetworkDisconnected()
 {
-    qDebug() << "Disconnected from LPR server";
+    qDebug() << "与识别服务器断开连接";
     if (m_settingsWindow)
     {
         m_settingsWindow->setActualConnectionStatus(false);
@@ -813,21 +813,21 @@ void MainWindow::onNetworkDisconnected()
 
 void MainWindow::onNetworkError(const QString &error)
 {
-    qDebug() << "网络err:" << error;
+    qDebug() << "网络错误:" << error;
 }
 
 void MainWindow::onAudioFileReady(const QString &fileName, const QByteArray &audioData)
 {
     if (fileName.isEmpty() || audioData.isEmpty())
     {
-        qDebug() << "Invalid audio, skip save";
+        qDebug() << "音频文件无效，忽略保存";
         return;
     }
 
     QDir dir(audioDirectoryPath());
     if (!dir.exists() && !dir.mkpath("."))
     {
-        qDebug() << "mkdir audio failed:" << dir.absolutePath();
+        qDebug() << "创建音频目录失败:" << dir.absolutePath();
         return;
     }
 
@@ -835,13 +835,13 @@ void MainWindow::onAudioFileReady(const QString &fileName, const QByteArray &aud
     QFile file(fullPath);
     if (!file.open(QIODevice::WriteOnly))
     {
-        qDebug() << "Save audio failed:" << fullPath << file.errorString();
+        qDebug() << "保存音频文件失败:" << fullPath << file.errorString();
         return;
     }
 
     file.write(audioData);
     file.close();
-    qDebug() << "Audio saved:" << fullPath;
+    qDebug() << "音频文件已保存:" << fullPath;
 
     if (m_audioThread)
     {
@@ -851,17 +851,17 @@ void MainWindow::onAudioFileReady(const QString &fileName, const QByteArray &aud
 
 void MainWindow::onAudioPlaybackStarted(const QString &filePath)
 {
-    qDebug() << "Playback start:" << filePath;
+    qDebug() << "开始播放语音:" << filePath;
 }
 
 void MainWindow::onAudioPlaybackFinished(const QString &filePath)
 {
-    qDebug() << "Playback done:" << filePath;
+    qDebug() << "语音播放完成:" << filePath;
 }
 
 void MainWindow::onAudioPlaybackError(const QString &filePath, const QString &error)
 {
-    qDebug() << "Playback error:" << filePath << error;
+    qDebug() << "语音播放失败:" << filePath << error;
 }
 
 void MainWindow::resetCaptureFlow()
@@ -890,7 +890,7 @@ void MainWindow::setGateOpened(bool opened, const QString &reason)
 
     m_gateOpenUntil = QDateTime();
     m_gateOpenReason.clear();
-    m_gateStatusLabel->setText("Closed");
+    m_gateStatusLabel->setText("已关闭");
     m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
 }
 
@@ -919,15 +919,15 @@ void MainWindow::updateGateStatusDisplay()
     qint64 remainingMs = QDateTime::currentDateTime().msecsTo(m_gateOpenUntil);
     if (remainingMs <= 0)
     {
-        m_gateStatusLabel->setText("Closed");
+        m_gateStatusLabel->setText("已关闭");
         m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
         return;
     }
 
     int remainingSeconds = static_cast<int>((remainingMs + 999) / 1000);
     QString text = m_gateOpenReason.isEmpty()
-                       ? QString("OPEN (%1s)").arg(remainingSeconds)
-                       : QString("OPEN (%1s)\n%2").arg(remainingSeconds).arg(m_gateOpenReason);
+                       ? QString("已打开 (%1秒)").arg(remainingSeconds)
+                       : QString("已打开 (%1秒)\n%2").arg(remainingSeconds).arg(m_gateOpenReason);
     m_gateStatusLabel->setText(text);
     m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
 }
@@ -953,7 +953,7 @@ void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
     m_exitDialog->setImage(m_lastCapturePixmap);
     m_exitDialog->setParkingInfo(vehicleInfo.plateNumber, vehicleInfo.entryTime, now, duration);
     m_exitDialog->setFeeInfo(fee);
-    m_exitDialog->setPaymentInfo("Swipe RFID within 10 s to exit");
+    m_exitDialog->setPaymentInfo("请在 10 秒内刷卡完成出场");
     m_exitDialog->startCountdown(10);
     m_exitDialog->show();
     m_exitDialog->raise();
@@ -964,9 +964,9 @@ void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
         m_recognitionTimer->stop();
     }
 
-    qDebug() << "Parked vehicle, exit dialog, plate:" << vehicleInfo.plateNumber
-             << "minutes:" << duration
-             << "fee due:" << fee;
+    qDebug() << "识别到在场车辆，弹出出场窗口, 车牌:" << vehicleInfo.plateNumber
+             << "停车分钟:" << duration
+             << "应付金额:" << fee;
 }
 
 void MainWindow::closeExitDialog(bool resumeRecognition)
@@ -995,13 +995,13 @@ void MainWindow::processRecognitionResult(const QString &plateNumber, double con
 
     if (!m_db || !m_db->isOpen())
     {
-        qDebug() << "Result ignored: DB closed";
+        qDebug() << "识别结果被忽略，数据库未打开";
         return;
     }
 
     if (isPlateInCooldown(plateNumber))
     {
-        qDebug() << "Cooldown, ignore plate:" << plateNumber;
+        qDebug() << "忽略冷却中的车牌识别结果:" << plateNumber;
         return;
     }
 
@@ -1014,7 +1014,7 @@ void MainWindow::processRecognitionResult(const QString &plateNumber, double con
             {
                 m_hardware->alarm();
             }
-            qDebug() << "Entry denied (blacklist):" << plateNumber;
+            qDebug() << "入场被拒绝, 黑名单车辆:" << plateNumber;
             markPlateCooldown(plateNumber);
             m_pendingRfidCard.clear();
             m_pendingRfidTime = QDateTime();
@@ -1024,16 +1024,16 @@ void MainWindow::processRecognitionResult(const QString &plateNumber, double con
         int recordId = m_db->addVehicle(plateNumber);
         if (recordId < 0)
         {
-            qDebug() << "Entry DB failed, plate:" << plateNumber
-                     << "err:" << m_db->lastError();
+            qDebug() << "自动入场落库失败, 车牌:" << plateNumber
+                     << "错误:" << m_db->lastError();
             m_pendingRfidCard.clear();
             m_pendingRfidTime = QDateTime();
             return;
         }
 
-        qDebug() << "Entry OK, recordId:" << recordId << "车牌:" << plateNumber;
+        qDebug() << "自动入场成功, recordId:" << recordId << "车牌:" << plateNumber;
         markPlateCooldown(plateNumber);
-        openGateForPassage(QString("Vehicle %1 entered").arg(plateNumber));
+        openGateForPassage(QString("车辆 %1 入场").arg(plateNumber));
         m_pendingRfidCard.clear();
         m_pendingRfidTime = QDateTime();
         updateParkingStatus();

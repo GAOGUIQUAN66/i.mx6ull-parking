@@ -10,7 +10,7 @@
 #include <sys/select.h>
 #include <cstring>
 
-// JPEG FourCC (non-standard vs V4L2_PIX_FMT_JPEG)
+// JPEG FourCC 码 (不是标准的 V4L2_PIX_FMT_JPEG)
 #define V4L2_PIX_FMT_JPEG_RAW v4l2_fourcc('J', 'P', 'E', 'G')
 #define V4L2_PIX_FMT_RGB565_LE v4l2_fourcc('R', 'G', 'B', 'P')
 
@@ -37,42 +37,42 @@ bool V4L2Camera::open(const QString &device)
         close();
     }
 
-    // Open device
+    // 打开设备
     m_fd = ::open(device.toUtf8().constData(), O_RDWR | O_NONBLOCK);
     if (m_fd < 0) {
-        m_lastError = QString("Cannot open camera %1: %2").arg(device).arg(strerror(errno));
+        m_lastError = QString("无法打开摄像头 %1: %2").arg(device).arg(strerror(errno));
         return false;
     }
 
-    // Query caps
+    // 查询设备能力
     struct v4l2_capability cap;
     memset(&cap, 0, sizeof(cap));
     if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) < 0) {
-        m_lastError = QString("Query caps failed: %1").arg(strerror(errno));
+        m_lastError = QString("查询设备能力失败: %1").arg(strerror(errno));
         ::close(m_fd);
         m_fd = -1;
         return false;
     }
 
-    // Device info (debug)
-    qDebug() << "Camera device:" << device;
-    qDebug() << " driver:" << (char*)cap.driver;
-    qDebug() << " card:" << (char*)cap.card;
-    qDebug() << " bus:" << (char*)cap.bus_info;
-    qDebug() << " version:" << cap.version;
-    qDebug() << " caps:" << QString("0x%1").arg(cap.capabilities, 0, 16);
+    // 打印设备信息（调试）
+    qDebug() << "摄像头设备:" << device;
+    qDebug() << " 驱动:" << (char*)cap.driver;
+    qDebug() << " 卡名:" << (char*)cap.card;
+    qDebug() << " 总线:" << (char*)cap.bus_info;
+    qDebug() << " 版本:" << cap.version;
+    qDebug() << " 能力:" << QString("0x%1").arg(cap.capabilities, 0, 16);
 
-    // Video capture cap
+    // 检查是否支持视频捕获
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-        m_lastError = QString("No video capture (caps: 0x%1)").arg(cap.capabilities, 0, 16);
+        m_lastError = QString("设备不支持视频捕获 (能力: 0x%1)").arg(cap.capabilities, 0, 16);
         ::close(m_fd);
         m_fd = -1;
         return false;
     }
 
-    // Streaming I/O
+    // 检查是否支持流式IO
     if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-        m_lastError = QString("No streaming I/O (caps: 0x%1)").arg(cap.capabilities, 0, 16);
+        m_lastError = QString("设备不支持流式IO (能力: 0x%1)").arg(cap.capabilities, 0, 16);
         ::close(m_fd);
         m_fd = -1;
         return false;
@@ -103,15 +103,15 @@ void V4L2Camera::close()
 bool V4L2Camera::setFormat(int width, int height, PixelFormat format)
 {
     if (m_fd < 0) {
-        m_lastError = "Camera not open";
+        m_lastError = "摄像头未打开";
         return false;
     }
 
-    // Enumerate formats
+    // 先枚举摄像头支持的格式（调试）
     struct v4l2_fmtdesc fmtdesc;
     memset(&fmtdesc, 0, sizeof(fmtdesc));
     fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    qDebug() << "Supported pixel formats:";
+    qDebug() << "摄像头支持的像素格式:";
     while (ioctl(m_fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
         qDebug() << "  " << QString("%1%2%3%4")
                     .arg(char(fmtdesc.pixelformat & 0xFF))
@@ -149,18 +149,18 @@ bool V4L2Camera::setFormat(int width, int height, PixelFormat format)
     }
 
     if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) < 0) {
-        m_lastError = QString("setfmt failed: %1").arg(strerror(errno));
+        m_lastError = QString("设置格式失败: %1").arg(strerror(errno));
         return false;
     }
 
-    // Saved negotiated fmt
+    // 保存实际设置的格式
     m_width = fmt.fmt.pix.width;
     m_height = fmt.fmt.pix.height;
     m_format = format;
     m_actualFormat = fmt.fmt.pix.pixelformat;
 
-    // Actual fmt
-    qDebug() << "Actual pixel format:" << QString("%1%2%3%4")
+    // 打印实际格式（调试）
+    qDebug() << "实际像素格式:" << QString("%1%2%3%4")
         .arg(char(m_actualFormat & 0xFF))
         .arg(char((m_actualFormat >> 8) & 0xFF))
         .arg(char((m_actualFormat >> 16) & 0xFF))
@@ -172,7 +172,7 @@ bool V4L2Camera::setFormat(int width, int height, PixelFormat format)
 bool V4L2Camera::requestBuffers(int count)
 {
     if (m_fd < 0) {
-        m_lastError = "Camera not open";
+        m_lastError = "摄像头未打开";
         return false;
     }
 
@@ -189,12 +189,12 @@ bool V4L2Camera::initMmap(int count)
     req.memory = V4L2_MEMORY_MMAP;
 
     if (ioctl(m_fd, VIDIOC_REQBUFS, &req) < 0) {
-        m_lastError = QString("REQBUFS failed: %1").arg(strerror(errno));
+        m_lastError = QString("请求缓冲区失败: %1").arg(strerror(errno));
         return false;
     }
 
     if (req.count < 2) {
-        m_lastError = "Insufficient buffers";
+        m_lastError = "缓冲区数量不足";
         return false;
     }
 
@@ -210,7 +210,7 @@ bool V4L2Camera::initMmap(int count)
         buf.index = i;
 
         if (ioctl(m_fd, VIDIOC_QUERYBUF, &buf) < 0) {
-            m_lastError = QString("QUERYBUF failed: %1").arg(strerror(errno));
+            m_lastError = QString("查询缓冲区失败: %1").arg(strerror(errno));
             freeBuffers();
             return false;
         }
@@ -219,7 +219,7 @@ bool V4L2Camera::initMmap(int count)
             MAP_SHARED, m_fd, buf.m.offset);
 
         if (m_buffers[i] == MAP_FAILED) {
-            m_lastError = QString("mmap failed: %1").arg(strerror(errno));
+            m_lastError = QString("内存映射失败: %1").arg(strerror(errno));
             freeBuffers();
             return false;
         }
@@ -252,7 +252,7 @@ void V4L2Camera::freeBuffers()
 bool V4L2Camera::startCapture()
 {
     if (m_fd < 0) {
-        m_lastError = "Camera not open";
+        m_lastError = "摄像头未打开";
         return false;
     }
 
@@ -265,14 +265,14 @@ bool V4L2Camera::startCapture()
         buf.index = i;
 
         if (ioctl(m_fd, VIDIOC_QBUF, &buf) < 0) {
-            m_lastError = QString("QBUF failed: %1").arg(strerror(errno));
+            m_lastError = QString("入队缓冲区失败: %1").arg(strerror(errno));
             return false;
         }
     }
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(m_fd, VIDIOC_STREAMON, &type) < 0) {
-        m_lastError = QString("STREAMON failed: %1").arg(strerror(errno));
+        m_lastError = QString("启动流失败: %1").arg(strerror(errno));
         return false;
     }
 
@@ -300,36 +300,36 @@ QImage V4L2Camera::grabFrame(int timeoutMs, QByteArray *rawFrame)
         *rawFrame = raw;
     }
 
-    // Convert by pixel format
+    // 根据实际像素格式转换
     quint32 fmt = m_actualFormat;
 
-    // JPEG / MJPG
+    // JPEG格式 (JPEG 或 MJPG)
     if (fmt == V4L2_PIX_FMT_JPEG_RAW || fmt == V4L2_PIX_FMT_MJPEG ||
         fmt == v4l2_fourcc('J', 'P', 'E', 'G') || fmt == v4l2_fourcc('J', 'P', 'G', '4')) {
         QImage image = QImage::fromData(raw);
         if (image.isNull()) {
-            m_lastError = QString("JPEG decode failed, size=%1").arg(raw.size());
+            m_lastError = QString("JPEG帧解码失败，帧大小=%1").arg(raw.size());
             qDebug() << "V4L2Camera:" << m_lastError;
         }
         return image;
     }
 
-    // RGB565
+    // RGB565格式
     if (fmt == v4l2_fourcc('R', 'G', 'B', 'P')) {
         return rgb565ToRgb(raw.constData(), m_width, m_height);
     }
 
-    // YUYV
+    // YUYV格式
     if (fmt == V4L2_PIX_FMT_YUYV) {
         return yuyvToRgb(raw.constData(), m_width, m_height);
     }
 
-    // UYVY
+    // UYVY格式
     if (fmt == V4L2_PIX_FMT_UYVY) {
         return uyvyToRgb(raw.constData(), m_width, m_height);
     }
 
-    // Fallback convert
+    // 默认尝试按设置格式转换
     switch (m_format) {
     case FORMAT_YUYV:
         return yuyvToRgb(raw.constData(), m_width, m_height);
@@ -341,7 +341,7 @@ QImage V4L2Camera::grabFrame(int timeoutMs, QByteArray *rawFrame)
     case FORMAT_MJPEG: {
         QImage image = QImage::fromData(raw);
         if (image.isNull()) {
-            m_lastError = QString("JPEG decode failed, size=%1").arg(raw.size());
+            m_lastError = QString("JPEG帧解码失败，帧大小=%1").arg(raw.size());
             qDebug() << "V4L2Camera:" << m_lastError;
         }
         return image;
@@ -354,7 +354,7 @@ QImage V4L2Camera::grabFrame(int timeoutMs, QByteArray *rawFrame)
 QByteArray V4L2Camera::grabRawFrame(int timeoutMs)
 {
     if (m_fd < 0 || m_state != StateStreaming) {
-        m_lastError = "Camera not streaming";
+        m_lastError = "摄像头未在采集状态";
         return QByteArray();
     }
 
@@ -368,11 +368,11 @@ QByteArray V4L2Camera::grabRawFrame(int timeoutMs)
 
     int ret = select(m_fd + 1, &fds, nullptr, nullptr, &tv);
     if (ret < 0) {
-        m_lastError = QString("select failed: %1").arg(strerror(errno));
+        m_lastError = QString("select失败: %1").arg(strerror(errno));
         return QByteArray();
     }
     if (ret == 0) {
-        m_lastError = "Frame timeout";
+        m_lastError = "获取帧超时";
         return QByteArray();
     }
 
@@ -382,14 +382,14 @@ QByteArray V4L2Camera::grabRawFrame(int timeoutMs)
     buf.memory = V4L2_MEMORY_MMAP;
 
     if (ioctl(m_fd, VIDIOC_DQBUF, &buf) < 0) {
-        m_lastError = QString("DQBUF failed: %1").arg(strerror(errno));
+        m_lastError = QString("出队缓冲区失败: %1").arg(strerror(errno));
         return QByteArray();
     }
 
     QByteArray data((const char*)m_buffers[buf.index], buf.bytesused);
 
     if (ioctl(m_fd, VIDIOC_QBUF, &buf) < 0) {
-        m_lastError = QString("QBUF(requeue) failed: %1").arg(strerror(errno));
+        m_lastError = QString("重新入队失败: %1").arg(strerror(errno));
     }
 
     return data;
@@ -488,15 +488,15 @@ QImage V4L2Camera::rgb565ToRgb(const void *data, int width, int height)
 
     for (int i = 0; i < width * height; ++i) {
         unsigned short pixel = rgb565[i];
-        // RGB565 5-6-5
-        int r = (pixel >> 11) & 0x1F;  // 5 bits
-        int g = (pixel >> 5) & 0x3F;   // 6 bits
-        int b = pixel & 0x1F;          // 5 bits
+        // RGB565: R(5位) G(6位) B(5位)
+        int r = (pixel >> 11) & 0x1F;  // 5位
+        int g = (pixel >> 5) & 0x3F;   // 6位
+        int b = pixel & 0x1F;          // 5位
 
-        // Expand to 8-bit
-        r = (r << 3) | (r >> 2);  // 5 bits -> 8位
-        g = (g << 2) | (g >> 4);  // 6 bits -> 8位
-        b = (b << 3) | (b >> 2);  // 5 bits -> 8位
+        // 扩展到8位
+        r = (r << 3) | (r >> 2);  // 5位 -> 8位
+        g = (g << 2) | (g >> 4);  // 6位 -> 8位
+        b = (b << 3) | (b >> 2);  // 5位 -> 8位
 
         rgb[i * 3] = r;
         rgb[i * 3 + 1] = g;
