@@ -1,0 +1,298 @@
+#include "exitdialog.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGroupBox>
+
+// 颜色定义
+#define COLOR_BG_DARK "#1a1a2e"
+#define COLOR_BG_PANEL "#16213e"
+#define COLOR_ACCENT "#e94560"
+#define COLOR_SUCCESS "#4ecca3"
+#define COLOR_WARNING "#ffd93d"
+#define COLOR_TEXT_GRAY "#a0a0a0"
+
+ExitDialog::ExitDialog(QWidget *parent)
+    : QDialog(parent), m_imageLabel(nullptr), m_imageTimeLabel(nullptr), m_plateLabel(nullptr), m_entryTimeLabel(nullptr), m_exitTimeLabel(nullptr), m_durationLabel(nullptr), m_totalFeeLabel(nullptr), m_cardLabel(nullptr), m_balanceLabel(nullptr), m_statusLabel(nullptr), m_countdownLabel(nullptr), m_closeBtn(nullptr), m_countdownTimer(new QTimer(this)), m_countdownValue(0)
+{
+    setWindowTitle("车辆出场结算");
+    setFixedSize(760, 520);
+    setStyleSheet(QString(
+                      "QDialog { background: %1; }"
+                      "QLabel { color: white; }"
+                      "QPushButton { "
+                      "   border: none; "
+                      "   border-radius: 10px; "
+                      "   padding: 12px 36px; "
+                      "   font-size: 16px; "
+                      "   font-weight: bold; "
+                      "}"
+                      "QPushButton:hover { opacity: 0.9; }")
+                      .arg(COLOR_BG_DARK));
+
+    m_countdownTimer->setInterval(1000);
+    connect(m_countdownTimer, &QTimer::timeout, this, &ExitDialog::onCountdownTick);
+
+    setupUI();
+}
+
+ExitDialog::~ExitDialog()
+{
+}
+
+void ExitDialog::setupUI()
+{
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setSpacing(15);
+    mainLayout->setContentsMargins(20, 15, 20, 15);
+
+    QLabel *titleLabel = new QLabel("车辆出场结算");
+    titleLabel->setStyleSheet(QString(
+                                  "font-size: 22px; font-weight: bold; color: white; "
+                                  "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #3db892); "
+                                  "padding: 15px; border-radius: 10px;")
+                                  .arg(COLOR_SUCCESS));
+    titleLabel->setAlignment(Qt::AlignCenter);
+    mainLayout->addWidget(titleLabel);
+
+    QHBoxLayout *contentLayout = new QHBoxLayout();
+    contentLayout->setSpacing(20);
+
+    QVBoxLayout *imageLayout = new QVBoxLayout();
+    m_imageLabel = new QLabel();
+    m_imageLabel->setFixedSize(280, 210);
+    m_imageLabel->setStyleSheet(QString(
+                                    "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 %2); "
+                                    "border: 2px solid #333; border-radius: 10px;")
+                                    .arg(COLOR_BG_DARK, COLOR_BG_PANEL));
+    m_imageLabel->setAlignment(Qt::AlignCenter);
+    m_imageLabel->setText("等待出场抓拍图像");
+
+    m_imageTimeLabel = new QLabel("识别时间: --");
+    m_imageTimeLabel->setAlignment(Qt::AlignCenter);
+    m_imageTimeLabel->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+
+    imageLayout->addWidget(m_imageLabel);
+    imageLayout->addWidget(m_imageTimeLabel);
+    contentLayout->addLayout(imageLayout);
+
+    QVBoxLayout *infoLayout = new QVBoxLayout();
+    infoLayout->setSpacing(15);
+
+    QGroupBox *parkingGroup = new QGroupBox("车辆信息");
+    parkingGroup->setStyleSheet(
+        "QGroupBox { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 15px; border: none; }"
+        "QGroupBox::title { color: white; font-size: 16px; font-weight: bold; }");
+
+    QVBoxLayout *parkingLayout = new QVBoxLayout(parkingGroup);
+    parkingLayout->setSpacing(12);
+
+    QHBoxLayout *plateRow = new QHBoxLayout();
+    QLabel *plateTitle = new QLabel("车牌号");
+    plateTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_plateLabel = new QLabel("--");
+    m_plateLabel->setStyleSheet(QString("font-size: 24px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
+    plateRow->addWidget(plateTitle);
+    plateRow->addStretch();
+    plateRow->addWidget(m_plateLabel);
+
+    QHBoxLayout *entryRow = new QHBoxLayout();
+    QLabel *entryTitle = new QLabel("入场时间");
+    entryTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_entryTimeLabel = new QLabel("--");
+    m_entryTimeLabel->setStyleSheet("font-size: 16px; color: white;");
+    entryRow->addWidget(entryTitle);
+    entryRow->addStretch();
+    entryRow->addWidget(m_entryTimeLabel);
+
+    QHBoxLayout *exitRow = new QHBoxLayout();
+    QLabel *exitTitle = new QLabel("当前时间");
+    exitTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_exitTimeLabel = new QLabel("--");
+    m_exitTimeLabel->setStyleSheet("font-size: 16px; color: white;");
+    exitRow->addWidget(exitTitle);
+    exitRow->addStretch();
+    exitRow->addWidget(m_exitTimeLabel);
+
+    QHBoxLayout *durationRow = new QHBoxLayout();
+    QLabel *durationTitle = new QLabel("停车时长");
+    durationTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_durationLabel = new QLabel("--");
+    m_durationLabel->setStyleSheet(QString("font-size: 18px; font-weight: bold; color: %1;").arg(COLOR_WARNING));
+    durationRow->addWidget(durationTitle);
+    durationRow->addStretch();
+    durationRow->addWidget(m_durationLabel);
+
+    parkingLayout->addLayout(plateRow);
+    parkingLayout->addLayout(entryRow);
+    parkingLayout->addLayout(exitRow);
+    parkingLayout->addLayout(durationRow);
+
+    infoLayout->addWidget(parkingGroup);
+
+    QGroupBox *feeGroup = new QGroupBox("结算信息");
+    feeGroup->setStyleSheet(
+        "QGroupBox { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 15px; border: none; }"
+        "QGroupBox::title { color: white; font-size: 16px; font-weight: bold; }");
+
+    QVBoxLayout *feeLayout = new QVBoxLayout(feeGroup);
+    feeLayout->setSpacing(12);
+
+    QHBoxLayout *feeRow = new QHBoxLayout();
+    QLabel *feeTitle = new QLabel("应付金额");
+    feeTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_totalFeeLabel = new QLabel("¥0.00");
+    m_totalFeeLabel->setStyleSheet(QString("font-size: 19px; font-weight: bold; color: %1;").arg(COLOR_ACCENT));
+    feeRow->addWidget(feeTitle);
+    feeRow->addStretch();
+    feeRow->addWidget(m_totalFeeLabel);
+
+    QHBoxLayout *cardRow = new QHBoxLayout();
+    QLabel *cardTitle = new QLabel("刷卡卡号");
+    cardTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_cardLabel = new QLabel("未刷卡");
+    m_cardLabel->setStyleSheet("font-size: 15px; color: white;");
+    cardRow->addWidget(cardTitle);
+    cardRow->addStretch();
+    cardRow->addWidget(m_cardLabel);
+
+    QHBoxLayout *balanceRow = new QHBoxLayout();
+    QLabel *balanceTitle = new QLabel("卡内余额");
+    balanceTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    m_balanceLabel = new QLabel("--");
+    m_balanceLabel->setStyleSheet("font-size: 16px; color: white;");
+    balanceRow->addWidget(balanceTitle);
+    balanceRow->addStretch();
+    balanceRow->addWidget(m_balanceLabel);
+
+    m_statusLabel = new QLabel("请在 10 秒内刷卡完成出场");
+    m_statusLabel->setWordWrap(true);
+    m_statusLabel->setMinimumHeight(40);
+    m_statusLabel->setStyleSheet(QString(
+                                     "font-size: 14px; font-weight: bold; color: %1; "
+                                     "background: rgba(78, 204, 163, 0.12); border-radius: 8px; padding: 10px;")
+                                     .arg(COLOR_SUCCESS));
+
+    m_countdownLabel = new QLabel("剩余刷卡时间: 10 秒");
+    m_countdownLabel->setAlignment(Qt::AlignCenter);
+    m_countdownLabel->setStyleSheet(QString("font-size: 15px; color: %1; margin-top: 8px;").arg(COLOR_WARNING));
+
+    feeLayout->addLayout(feeRow);
+    feeLayout->addLayout(cardRow);
+    feeLayout->addLayout(balanceRow);
+    feeLayout->addSpacing(5);
+    feeLayout->addWidget(m_statusLabel);
+    feeLayout->addSpacing(5);
+    feeLayout->addWidget(m_countdownLabel);
+
+    infoLayout->addWidget(feeGroup);
+    contentLayout->addLayout(infoLayout, 1);
+
+    mainLayout->addLayout(contentLayout);
+
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    m_closeBtn = new QPushButton("关闭");
+    m_closeBtn->setStyleSheet(
+        "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #333, stop:1 #222); "
+        "color: white; border: 2px solid #555;");
+    connect(m_closeBtn, &QPushButton::clicked, this, &ExitDialog::onCancelClicked);
+
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(m_closeBtn);
+    buttonLayout->addStretch();
+    mainLayout->addLayout(buttonLayout);
+}
+
+void ExitDialog::setImage(const QPixmap &image)
+{
+    if (!image.isNull())
+    {
+        QPixmap scaled = image.scaled(m_imageLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation);
+        m_imageLabel->setPixmap(scaled);
+        return;
+    }
+
+    m_imageLabel->setPixmap(QPixmap());
+    m_imageLabel->setText("等待出场抓拍图像");
+}
+
+void ExitDialog::setParkingInfo(const QString &plateNumber, const QDateTime &entryTime,
+                                const QDateTime &exitTime, int duration)
+{
+    m_plateNumber = plateNumber;
+    m_plateLabel->setText(plateNumber);
+    m_entryTimeLabel->setText(entryTime.toString("yyyy-MM-dd hh:mm:ss"));
+    m_exitTimeLabel->setText(exitTime.toString("yyyy-MM-dd hh:mm:ss"));
+
+    int hours = duration / 60;
+    int mins = duration % 60;
+    m_durationLabel->setText(QString("%1小时%2分").arg(hours).arg(mins));
+    m_imageTimeLabel->setText("识别时间: " + exitTime.toString("yyyy-MM-dd hh:mm:ss"));
+}
+
+void ExitDialog::setFeeInfo(double totalFee)
+{
+    m_totalFeeLabel->setText(QString("¥%1").arg(totalFee, 0, 'f', 2));
+}
+
+void ExitDialog::setPaymentInfo(const QString &statusText, const QString &cardId, double balance)
+{
+    m_cardLabel->setText(cardId.isEmpty() ? "未刷卡" : cardId);
+
+    if (balance >= 0.0)
+    {
+        m_balanceLabel->setText(QString("¥%1").arg(balance, 0, 'f', 2));
+    }
+    else
+    {
+        m_balanceLabel->setText("--");
+    }
+
+    m_statusLabel->setText(statusText);
+}
+
+void ExitDialog::startCountdown(int seconds)
+{
+    m_countdownValue = seconds;
+    updateCountdownLabel();
+    m_countdownTimer->start();
+}
+
+void ExitDialog::stopCountdown()
+{
+    m_countdownTimer->stop();
+}
+
+QString ExitDialog::getPlateNumber() const
+{
+    return m_plateNumber;
+}
+
+void ExitDialog::onCancelClicked()
+{
+    stopCountdown();
+    emit cancelled();
+    reject();
+}
+
+void ExitDialog::onCountdownTick()
+{
+    if (m_countdownValue > 0)
+    {
+        --m_countdownValue;
+    }
+
+    updateCountdownLabel();
+    if (m_countdownValue > 0)
+    {
+        return;
+    }
+
+    stopCountdown();
+    emit timedOut();
+    reject();
+}
+
+void ExitDialog::updateCountdownLabel()
+{
+    m_countdownLabel->setText(QString("剩余刷卡时间: %1 秒").arg(m_countdownValue));
+}

@@ -33,7 +33,7 @@ public:
         int port;
         bool isConnected;
 
-        NetworkConfig() : serverIp("192.168.137.121"), port(8888), isConnected(false) {}
+        NetworkConfig() : serverIp("192.168.137.50"), port(8888), isConnected(false) {}
     };
 
     /**

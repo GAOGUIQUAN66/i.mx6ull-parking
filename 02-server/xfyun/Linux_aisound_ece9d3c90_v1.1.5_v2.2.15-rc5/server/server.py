@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.8
 import json
 import os
 import socket
@@ -15,7 +15,7 @@ import numpy as np
 from lpr_service import PlateRecognitionService
 
 
-HOST = "192.168.137.121"
+HOST = "192.168.137.50"
 PORT = 8888
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

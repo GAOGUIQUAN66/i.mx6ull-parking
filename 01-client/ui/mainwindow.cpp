@@ -19,7 +19,7 @@
 #define COLOR_TEXT_GRAY "#a0a0a0"
 
 // 服务器配置
-#define SERVER_HOST "192.168.137.121" // Ubuntu上位机IP
+#define SERVER_HOST "192.168.137.50" // Ubuntu上位机IP
 #define SERVER_PORT 8888
 #define RFID_VALID_WINDOW_MS 15000
 #define GATE_OPEN_MS 5000

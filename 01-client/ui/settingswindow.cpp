@@ -107,7 +107,7 @@ void SettingsWindow::setupUI()
     QLabel *ipLabel = new QLabel("上位机IP:");
     ipLabel->setFixedWidth(140);
     ipLabel->setStyleSheet(QString("font-size: 16px; color: %1;").arg(COLOR_TEXT_GRAY));
-    m_serverIpEdit = new QLineEdit("192.168.137.121");
+    m_serverIpEdit = new QLineEdit("192.168.137.50");
     m_serverIpEdit->setFixedWidth(300);
     ipRow->addWidget(ipLabel);
     ipRow->addWidget(m_serverIpEdit);
@@ -263,7 +263,7 @@ void SettingsWindow::onSaveClicked()
 
 void SettingsWindow::onDefaultClicked()
 {
-    m_serverIpEdit->setText("192.168.137.121");
+    m_serverIpEdit->setText("192.168.137.50");
     m_portSpin->setValue(8888);
 }
 

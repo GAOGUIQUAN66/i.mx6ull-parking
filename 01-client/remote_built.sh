@@ -3,9 +3,9 @@
 # ATK-IMX6U Qt 项目构建 + 部署脚本
 #############################################################################
 # ==================== 配置区域 ====================
-PROJECT_PATH="/home/chentao/qt_pro/jiedan/imx6ull/car_lis"
+PROJECT_PATH="/home/ubuntu-alientek/linux/IMX6ULL/i.mx6ull-parking/01-client"
 PROJECT_PRO="imx6ull_parking.pro"
-QMAKE_BIN="/opt/qt5.7.0/bin/qmake"
+QMAKE_BIN="/home/ubuntu-alientek/qt5.12.9/qt-everywhere-src-5.12.9/arm-qt/bin/qmake"
 QMAKE_SPEC="linux-arm-gnueabi-g++"
 QMAKE_ARGS="-r CONFIG+=debug"
 MAKE_JOBS="4"

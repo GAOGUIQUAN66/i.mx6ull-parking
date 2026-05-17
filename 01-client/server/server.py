@@ -5,7 +5,9 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 from datetime import datetime
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -13,14 +15,13 @@ import numpy as np
 from lpr_service import PlateRecognitionService
 
 
-HOST = "192.168.137.121"
+HOST = "192.168.137.50"
 PORT = 8888
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
-SAVE_DIR = os.path.join(BASE_DIR, "pic")
-AIKIT_BIN = os.path.join(ROOT_DIR, "aikit_test")
-AIKIT_LIBS_DIR = os.path.join(ROOT_DIR, "libs")
+AIKIT_BIN = os.environ.get("AIKIT_BIN", os.path.join(ROOT_DIR, "aikit_test"))
+AIKIT_LIBS_DIR = os.environ.get("AIKIT_LIBS_DIR", os.path.join(ROOT_DIR, "libs"))
 
 PACKET_HEADER_SIZE = 5
 PACKET_TYPE_IMAGE = 1
@@ -30,16 +31,6 @@ PACKET_TYPE_RAW_IMAGE = 4
 PACKET_TYPE_AUDIO = 5
 
 RECOGNIZER = PlateRecognitionService()
-
-
-def detect_extension(payload):
-    if payload.startswith(b"\xff\xd8\xff"):
-        return ".jpg"
-    if payload.startswith(b"BM"):
-        return ".bmp"
-    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
-        return ".png"
-    return ".bin"
 
 
 def recv_exact(conn, size):
@@ -83,37 +74,8 @@ def send_audio(conn, file_name, audio_data, event_type="", text=""):
     conn.sendall(packet)
 
 
-def save_rgb565_preview(raw_data, width, height, path):
-    row_stride = width * 3
-    padding = (4 - (row_stride % 4)) % 4
-    image_size = (row_stride + padding) * height
-    file_size = 14 + 40 + image_size
-
-    with open(path, "wb") as f:
-        f.write(b"BM")
-        f.write(struct.pack("<IHHI", file_size, 0, 0, 54))
-        f.write(
-            struct.pack(
-                "<IIIHHIIIIII", 40, width, height, 1, 24, 0, image_size, 0, 0, 0, 0
-            )
-        )
-
-        for y in range(height - 1, -1, -1):
-            row = bytearray()
-            base = y * width * 2
-            for x in range(width):
-                offset = base + x * 2
-                pixel = raw_data[offset] | (raw_data[offset + 1] << 8)
-                r = (pixel >> 11) & 0x1F
-                g = (pixel >> 5) & 0x3F
-                b = pixel & 0x1F
-                r = (r << 3) | (r >> 2)
-                g = (g << 2) | (g >> 4)
-                b = (b << 3) | (b >> 2)
-                row.extend([b, g, r])
-            if padding:
-                row.extend(b"\x00" * padding)
-            f.write(row)
+def log(message):
+    print("[{}] {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message))
 
 
 def decode_rgb565_to_bgr(raw_data, width, height):
@@ -155,42 +117,6 @@ def parse_raw_frame_payload(payload):
     }
 
 
-def save_raw_frame(frame_info, base_name):
-    raw_name = "{}_{}x{}_{}.raw".format(
-        base_name,
-        frame_info["width"],
-        frame_info["height"],
-        frame_info["pixel_format"].lower(),
-    )
-    raw_path = os.path.join(SAVE_DIR, raw_name)
-    with open(raw_path, "wb") as f:
-        f.write(frame_info["raw_data"])
-
-    meta = {
-        "width": frame_info["width"],
-        "height": frame_info["height"],
-        "pixel_format": frame_info["pixel_format"],
-        "data_size": len(frame_info["raw_data"]),
-        "raw_file": raw_name,
-    }
-
-    if frame_info["pixel_format"] == "RGBP":
-        preview_name = "{}_preview.bmp".format(base_name)
-        preview_path = os.path.join(SAVE_DIR, preview_name)
-        save_rgb565_preview(
-            frame_info["raw_data"], frame_info["width"], frame_info["height"], preview_path
-        )
-        meta["preview_file"] = preview_name
-        print("保存预览: {}".format(preview_path))
-
-    meta_path = os.path.join(SAVE_DIR, "{}.json".format(base_name))
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2, sort_keys=True, ensure_ascii=False)
-
-    print("保存原始帧: {}".format(raw_path))
-    print("保存元信息: {}".format(meta_path))
-
-
 def decode_image_payload(payload):
     data = np.frombuffer(payload, dtype=np.uint8)
     image = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -208,23 +134,35 @@ def decode_raw_frame_to_bgr(frame_info):
     raise ValueError("暂不支持的原始像素格式: {}".format(pixel_format))
 
 
+def decode_packet_to_bgr(packet_type, payload):
+    if packet_type == PACKET_TYPE_IMAGE:
+        return decode_image_payload(payload)
+    if packet_type == PACKET_TYPE_RAW_IMAGE:
+        frame_info = parse_raw_frame_payload(payload)
+        return decode_raw_frame_to_bgr(frame_info)
+    raise ValueError("不支持的图像数据包类型: {}".format(packet_type))
+
+
 def recognize_plate(image_bgr):
     result = RECOGNIZER.recognize(image_bgr)
     plate_number = result.get("plate_number", "")
+    confidence = float(result.get("confidence", 0.0))
     if plate_number:
-        print(
-            "识别成功: {} color={} resize_rate={}".format(
+        log(
+            "识别成功: {} confidence={:.4f} plate_type={} resize_rate={}".format(
                 plate_number,
-                result.get("color"),
+                confidence,
+                result.get("plate_type"),
                 result.get("resize_rate"),
             )
         )
         return True, plate_number, result
 
-    print("识别失败: 未检测到有效车牌")
+    log("识别失败: 未检测到有效车牌")
     return False, "", result
 
 
+@lru_cache(maxsize=128)
 def generate_tts_wav(text):
     if not text:
         raise ValueError("文本为空，无法生成语音")
@@ -238,7 +176,9 @@ def generate_tts_wav(text):
     try:
         env = os.environ.copy()
         ld_library_path = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = "{}:{}".format(AIKIT_LIBS_DIR, ld_library_path).rstrip(":")
+        env["LD_LIBRARY_PATH"] = "{}:{}".format(AIKIT_LIBS_DIR, ld_library_path).rstrip(
+            ":"
+        )
 
         result = subprocess.run(
             [AIKIT_BIN, text, wav_path],
@@ -246,6 +186,7 @@ def generate_tts_wav(text):
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=20,
         )
 
         if result.returncode != 0:
@@ -272,94 +213,99 @@ def generate_tts_wav(text):
             os.remove(wav_path)
 
 
-def handle_recognition_result(conn, plate_number, base_name):
-    send_result(conn, True, "", plate_number, 0.99)
+def handle_recognition_success(conn, recognition_result, base_name):
+    plate_number = recognition_result["plate_number"]
+    confidence = float(recognition_result.get("confidence", 0.0))
+    send_result(conn, True, "", plate_number, confidence)
 
     try:
         wav_data = generate_tts_wav(plate_number)
         wav_name = "{}_plate.wav".format(base_name)
         send_audio(conn, wav_name, wav_data, "plate_result", plate_number)
-        print("返回语音文件: {}".format(wav_name))
+        log("返回语音文件: {}".format(wav_name))
     except Exception as exc:
-        print("语音生成失败: {}".format(exc))
+        log("语音生成失败: {}".format(exc))
+
+
+def handle_image_packet(conn, packet_type, payload, base_name):
+    image_bgr = decode_packet_to_bgr(packet_type, payload)
+    success, _, recognition_result = recognize_plate(image_bgr)
+    if success:
+        handle_recognition_success(conn, recognition_result, base_name)
+        return
+    send_result(conn, False, "plate not recognized", "", 0.0)
+
+
+def handle_text_packet(conn, payload):
+    text = payload.decode("utf-8", errors="replace")
+    log("收到文本: {}".format(text))
+    request = json.loads(text)
+    if request.get("type") != "tts":
+        raise ValueError("未知文本请求类型: {}".format(request.get("type")))
+
+    speech_text = request.get("text", "")
+    event_type = request.get("event", "")
+    file_name = request.get("file_name", "")
+    if not speech_text:
+        raise ValueError("tts 请求缺少 text")
+    if not file_name:
+        raise ValueError("tts 请求缺少 file_name")
+
+    wav_data = generate_tts_wav(speech_text)
+    send_audio(conn, file_name, wav_data, event_type, speech_text)
+    log("返回语音文件: {} event={}".format(file_name, event_type))
 
 
 def handle_client(conn, addr):
-    print("客户端连接: {}".format(addr[0]))
+    peer = "{}:{}".format(addr[0], addr[1])
+    log("客户端连接: {}".format(peer))
     try:
         while True:
             header = recv_exact(conn, PACKET_HEADER_SIZE)
             if not header:
-                print("客户端断开: {}".format(addr[0]))
+                log("客户端断开: {}".format(peer))
                 break
 
             payload_size, packet_type = struct.unpack(">IB", header)
             payload = recv_exact(conn, payload_size)
             if not payload:
-                print("客户端断开: {}".format(addr[0]))
+                log("客户端断开: {}".format(peer))
                 break
 
-            print("收到数据包: type={}, size={}".format(packet_type, payload_size))
+            log("收到数据包: type={}, size={}".format(packet_type, payload_size))
             base_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
             try:
-                if packet_type == PACKET_TYPE_IMAGE:
-                    ext = detect_extension(payload)
-                    image_path = os.path.join(SAVE_DIR, base_name + ext)
-                    with open(image_path, "wb") as f:
-                        f.write(payload)
-                    print("保存图像: {}".format(image_path))
-
-                    image_bgr = decode_image_payload(payload)
-                    success, plate_number, _ = recognize_plate(image_bgr)
-                    if success:
-                        handle_recognition_result(conn, plate_number, base_name)
-                    else:
-                        print("未识别到车牌，不回传结果")
-                elif packet_type == PACKET_TYPE_RAW_IMAGE:
-                    frame_info = parse_raw_frame_payload(payload)
-                    save_raw_frame(frame_info, base_name)
-                    image_bgr = decode_raw_frame_to_bgr(frame_info)
-                    success, plate_number, _ = recognize_plate(image_bgr)
-                    if success:
-                        handle_recognition_result(conn, plate_number, base_name)
-                    else:
-                        print("未识别到车牌，不回传结果")
+                if packet_type in (PACKET_TYPE_IMAGE, PACKET_TYPE_RAW_IMAGE):
+                    handle_image_packet(conn, packet_type, payload, base_name)
                 elif packet_type == PACKET_TYPE_TEXT:
-                    text = payload.decode("utf-8", errors="replace")
-                    print("收到文本: {}".format(text))
-                    request = json.loads(text)
-                    if request.get("type") == "tts":
-                        speech_text = request.get("text", "")
-                        event_type = request.get("event", "")
-                        file_name = request.get("file_name", "")
-                        if speech_text and file_name:
-                            wav_data = generate_tts_wav(speech_text)
-                            send_audio(conn, file_name, wav_data, event_type, speech_text)
-                            print("返回语音文件: {} event={}".format(file_name, event_type))
+                    handle_text_packet(conn, payload)
                 else:
-                    print("未知数据包类型: {}".format(packet_type))
+                    raise ValueError("未知数据包类型: {}".format(packet_type))
+
             except Exception as exc:
-                print("处理数据包失败: {}".format(exc))
+                log("处理数据包失败: {}".format(exc))
                 send_result(conn, False, str(exc), "", 0.0)
     finally:
         conn.close()
 
 
 def main():
-    os.makedirs(SAVE_DIR, exist_ok=True)
-
+    host = os.environ.get("SERVER_HOST", HOST)
+    port = int(os.environ.get("SERVER_PORT", PORT))
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(5)
+    server.bind((host, port))
+    server.listen(8)
 
-    print("识别模型已加载")
-    print("等待连接 {}:{} ...".format(HOST, PORT))
+    log("识别模型已加载")
+    log("等待连接 {}:{} ...".format(host, port))
 
     while True:
         conn, addr = server.accept()
-        handle_client(conn, addr)
+        worker = threading.Thread(target=handle_client, args=(conn, addr))
+        worker.daemon = True
+        worker.start()
 
 
 if __name__ == "__main__":

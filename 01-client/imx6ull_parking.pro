@@ -1,5 +1,5 @@
 #-------------------------------------------------
-# imx6ull_parking — ARM开发板 Qt 车牌识别系统
+# qt_test — ARM开发板 Qt 车牌识别系统
 # ATK-IMX6U / Qt5.12.9 / ARM Linux
 #-------------------------------------------------
 
@@ -51,7 +51,7 @@ HEADERS += \
 SOURCES += video/videothread.cpp
 HEADERS += video/videothread.h
 
-# ── RFID模块 (rfid/) ───────────────────────────────────────────
+# ── RFID模块 (rfid/) ────────────────────────────────────────────
 SOURCES += rfid/rfidthread.cpp
 HEADERS += rfid/rfidthread.h
 
