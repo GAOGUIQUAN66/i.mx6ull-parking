@@ -27,7 +27,7 @@
 #define AUDIO_DIR_PATH "/run/media/mmcblk1p1/audio"
 
 MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
-    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware)
+    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware), m_todayEntryLabel(nullptr), m_todayExitLabel(nullptr), m_todayRevenueLabel(nullptr)
 {
     setWindowTitle("智能车库管理系统");
     setFixedSize(1024, 600);
@@ -119,6 +119,7 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateTime);
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateParkingStatus);
     connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateRecentEntries);
+    connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::updateOperationStats);
     m_updateTimer->start(1000);
 
     // 单独定时刷新视频，只取最新帧，避免主线程积压旧帧
@@ -138,6 +139,7 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     updateTime();
     updateParkingStatus();
     updateRecentEntries();
+    updateOperationStats();
 }
 
 MainWindow::~MainWindow()
@@ -326,6 +328,10 @@ void MainWindow::setupUI()
     QGroupBox *gateGroup = createGatePanel();
     rightLayout->addWidget(gateGroup);
 
+    // 今日运营
+    QGroupBox *opsGroup = createOpsPanel();
+    rightLayout->addWidget(opsGroup);
+
     // 最近进场
     QGroupBox *recentGroup = createRecentPanel();
     rightLayout->addWidget(recentGroup, 1);
@@ -446,6 +452,33 @@ QGroupBox *MainWindow::createGatePanel()
     layout->addWidget(gateIcon);
     layout->addLayout(infoLayout);
     layout->addStretch();
+
+    return group;
+}
+
+QGroupBox *MainWindow::createOpsPanel()
+{
+    QGroupBox *group = new QGroupBox("今日运营统计");
+    QVBoxLayout *layout = new QVBoxLayout(group);
+    layout->setSpacing(8);
+
+    auto createRow = [](const QString &title, QLabel **valueLabel, const QString &color) {
+        QHBoxLayout *row = new QHBoxLayout();
+        QLabel *titleLabel = new QLabel(title);
+        titleLabel->setStyleSheet(QString("font-size: 12px; color: %1;").arg(COLOR_TEXT_GRAY));
+        QLabel *val = new QLabel("--");
+        val->setStyleSheet(QString("font-size: 13px; color: %1; font-weight: bold;").arg(color));
+        val->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(titleLabel);
+        row->addStretch();
+        row->addWidget(val);
+        *valueLabel = val;
+        return row;
+    };
+
+    layout->addLayout(createRow("今日入场", &m_todayEntryLabel, COLOR_SUCCESS));
+    layout->addLayout(createRow("今日出场", &m_todayExitLabel, COLOR_WARNING));
+    layout->addLayout(createRow("今日收入(元)", &m_todayRevenueLabel, COLOR_ACCENT));
 
     return group;
 }
@@ -669,6 +702,32 @@ void MainWindow::updateRecentEntries()
     {
         m_recentList->addItem("暂无近期记录");
     }
+}
+
+void MainWindow::updateOperationStats()
+{
+    if (!m_todayEntryLabel || !m_todayExitLabel || !m_todayRevenueLabel || !m_db || !m_db->isOpen()) {
+        return;
+    }
+
+    const QDate today = QDate::currentDate();
+    const QList<ParkingRecord> records = m_db->queryHistory(today, today);
+    int entryCount = 0;
+    int exitCount = 0;
+    double revenue = 0.0;
+    for (const ParkingRecord &record : records) {
+        if (record.entryTime.date() == today) {
+            ++entryCount;
+        }
+        if (record.exitTime.isValid() && record.exitTime.date() == today) {
+            ++exitCount;
+            revenue += record.fee;
+        }
+    }
+
+    m_todayEntryLabel->setText(QString::number(entryCount));
+    m_todayExitLabel->setText(QString::number(exitCount));
+    m_todayRevenueLabel->setText(QString::number(revenue, 'f', 2));
 }
 
 bool MainWindow::isPlateInCooldown(const QString &plateNumber) const
@@ -952,7 +1011,7 @@ void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
 
     m_exitDialog->setImage(m_lastCapturePixmap);
     m_exitDialog->setParkingInfo(vehicleInfo.plateNumber, vehicleInfo.entryTime, now, duration);
-    m_exitDialog->setFeeInfo(fee);
+    m_exitDialog->setFeeInfo(fee, duration, 0.1);
     m_exitDialog->setPaymentInfo("请在 10 秒内刷卡完成出场");
     m_exitDialog->startCountdown(10);
     m_exitDialog->show();

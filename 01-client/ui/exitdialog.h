@@ -37,7 +37,7 @@ public:
     void setParkingInfo(const QString &plateNumber, const QDateTime &entryTime,
                         const QDateTime &exitTime, int duration);
 
-    void setFeeInfo(double totalFee);
+    void setFeeInfo(double totalFee, int durationMinutes = -1, double unitPricePerMinute = 0.1);
     void setPaymentInfo(const QString &statusText, const QString &cardId = QString(),
                         double balance = -1.0);
     void startCountdown(int seconds = 10);
@@ -72,6 +72,7 @@ private:
 
     // 费用信息
     QLabel *m_totalFeeLabel;
+    QLabel *m_feeRuleLabel;
     QLabel *m_cardLabel;
     QLabel *m_balanceLabel;
     QLabel *m_statusLabel;

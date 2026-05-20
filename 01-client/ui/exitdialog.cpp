@@ -12,7 +12,7 @@
 #define COLOR_TEXT_GRAY "#a0a0a0"
 
 ExitDialog::ExitDialog(QWidget *parent)
-    : QDialog(parent), m_imageLabel(nullptr), m_imageTimeLabel(nullptr), m_plateLabel(nullptr), m_entryTimeLabel(nullptr), m_exitTimeLabel(nullptr), m_durationLabel(nullptr), m_totalFeeLabel(nullptr), m_cardLabel(nullptr), m_balanceLabel(nullptr), m_statusLabel(nullptr), m_countdownLabel(nullptr), m_closeBtn(nullptr), m_countdownTimer(new QTimer(this)), m_countdownValue(0)
+    : QDialog(parent), m_imageLabel(nullptr), m_imageTimeLabel(nullptr), m_plateLabel(nullptr), m_entryTimeLabel(nullptr), m_exitTimeLabel(nullptr), m_durationLabel(nullptr), m_totalFeeLabel(nullptr), m_feeRuleLabel(nullptr), m_cardLabel(nullptr), m_balanceLabel(nullptr), m_statusLabel(nullptr), m_countdownLabel(nullptr), m_closeBtn(nullptr), m_countdownTimer(new QTimer(this)), m_countdownValue(0)
 {
     setWindowTitle("车辆出场结算");
     setFixedSize(760, 520);
@@ -158,6 +158,18 @@ void ExitDialog::setupUI()
     feeRow->addStretch();
     feeRow->addWidget(m_totalFeeLabel);
 
+    QHBoxLayout *ruleRow = new QHBoxLayout();
+    QLabel *ruleTitle = new QLabel("计费规则");
+    ruleTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
+    ruleTitle->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    m_feeRuleLabel = new QLabel("按 0.10 元/分钟");
+    m_feeRuleLabel->setStyleSheet("font-size: 13px; color: white;");
+    m_feeRuleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_feeRuleLabel->setMinimumWidth(150);
+    ruleRow->addWidget(ruleTitle);
+    ruleRow->addStretch();
+    ruleRow->addWidget(m_feeRuleLabel);
+
     QHBoxLayout *cardRow = new QHBoxLayout();
     QLabel *cardTitle = new QLabel("刷卡卡号");
     cardTitle->setStyleSheet(QString("font-size: 14px; color: %1;").arg(COLOR_TEXT_GRAY));
@@ -198,6 +210,7 @@ void ExitDialog::setupUI()
     m_countdownLabel->setStyleSheet(QString("font-size: 14px; color: %1; margin-top: 5px;").arg(COLOR_WARNING)); // 从15px降至14px
 
     feeLayout->addLayout(feeRow);
+    feeLayout->addLayout(ruleRow);
     feeLayout->addLayout(cardRow);
     feeLayout->addLayout(balanceRow);
     feeLayout->addSpacing(3); // 减小间距
@@ -250,9 +263,21 @@ void ExitDialog::setParkingInfo(const QString &plateNumber, const QDateTime &ent
     m_imageTimeLabel->setText("识别时间: " + exitTime.toString("yyyy-MM-dd hh:mm:ss"));
 }
 
-void ExitDialog::setFeeInfo(double totalFee)
+void ExitDialog::setFeeInfo(double totalFee, int durationMinutes, double unitPricePerMinute)
 {
     m_totalFeeLabel->setText(QString("¥%1").arg(totalFee, 0, 'f', 2));
+    if (!m_feeRuleLabel) {
+        return;
+    }
+    if (durationMinutes >= 0) {
+        m_feeRuleLabel->setText(
+            QString("%1 分钟 × ¥%2/分钟 = ¥%3")
+                .arg(durationMinutes)
+                .arg(unitPricePerMinute, 0, 'f', 2)
+                .arg(totalFee, 0, 'f', 2));
+    } else {
+        m_feeRuleLabel->setText(QString("按 ¥%1/分钟计费").arg(unitPricePerMinute, 0, 'f', 2));
+    }
 }
 
 void ExitDialog::setPaymentInfo(const QString &statusText, const QString &cardId, double balance)

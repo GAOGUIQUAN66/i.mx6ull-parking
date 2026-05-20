@@ -89,8 +89,10 @@ private:
     QGroupBox* createVideoPanel();
     QGroupBox* createStatusPanel();
     QGroupBox* createGatePanel();
+    QGroupBox* createOpsPanel();
     QGroupBox* createRecentPanel();
     QWidget* createBottomBar();
+    void updateOperationStats();
 
     // 顶部区域
     QLabel *m_titleLabel;
@@ -107,6 +109,9 @@ private:
 
     // 闸门状态
     QLabel *m_gateStatusLabel;
+    QLabel *m_todayEntryLabel;
+    QLabel *m_todayExitLabel;
+    QLabel *m_todayRevenueLabel;
 
     // 最近进场
     QListWidget *m_recentList;

@@ -12,6 +12,7 @@ from functools import lru_cache
 import cv2
 import numpy as np
 
+from cloud_service import CloudSyncService
 from lpr_service import PlateRecognitionService
 
 
@@ -31,6 +32,10 @@ PACKET_TYPE_RAW_IMAGE = 4
 PACKET_TYPE_AUDIO = 5
 
 RECOGNIZER = PlateRecognitionService()
+CLOUD_SYNC = CloudSyncService()
+PULL_DB_SCRIPT = os.environ.get(
+    "PULL_DB_SCRIPT", os.path.join(BASE_DIR, "pull_parking_db.sh")
+)
 
 
 def recv_exact(conn, size):
@@ -76,6 +81,46 @@ def send_audio(conn, file_name, audio_data, event_type="", text=""):
 
 def log(message):
     print("[{}] {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message))
+
+
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def maybe_pull_business_db():
+    """
+    可选：启动 server.py 时自动拉取一次板子业务库。
+    默认开启，便于只执行一条 ./server.py 即可完成准备工作。
+    """
+    if not _env_bool("ENABLE_BUSINESS_DB_SYNC", False):
+        return
+    if not _env_bool("AUTO_PULL_DB_ON_START", True):
+        return
+
+    script_path = PULL_DB_SCRIPT
+    if not os.path.exists(script_path):
+        log("业务库拉取脚本不存在，跳过: {}".format(script_path))
+        return
+
+    try:
+        log("启动前自动拉取业务库: {}".format(script_path))
+        result = subprocess.run(
+            ["bash", script_path],
+            cwd=BASE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=True,
+        )
+        output = result.stdout.decode("utf-8", errors="replace").strip()
+        if output:
+            log("业务库拉取完成: {}".format(output.splitlines()[-1]))
+    except Exception as exc:
+        # 不中断主服务，避免因为拉库失败导致识别服务无法启动
+        log("业务库拉取失败，继续启动识别服务: {}".format(exc))
 
 
 def decode_rgb565_to_bgr(raw_data, width, height):
@@ -213,27 +258,48 @@ def generate_tts_wav(text):
             os.remove(wav_path)
 
 
-def handle_recognition_success(conn, recognition_result, base_name):
+def handle_recognition_success(conn, recognition_result, base_name, source="unknown"):
     plate_number = recognition_result["plate_number"]
     confidence = float(recognition_result.get("confidence", 0.0))
     send_result(conn, True, "", plate_number, confidence)
+    CLOUD_SYNC.report_plate_result(
+        plate_number=plate_number,
+        confidence=confidence,
+        plate_type=recognition_result.get("plate_type"),
+        source=source,
+    )
 
     try:
         wav_data = generate_tts_wav(plate_number)
         wav_name = "{}_plate.wav".format(base_name)
         send_audio(conn, wav_name, wav_data, "plate_result", plate_number)
         log("返回语音文件: {}".format(wav_name))
+        CLOUD_SYNC.report_tts_event(
+            event_type="plate_result",
+            text=plate_number,
+            file_name=wav_name,
+            status="success",
+        )
     except Exception as exc:
         log("语音生成失败: {}".format(exc))
+        CLOUD_SYNC.report_tts_event(
+            event_type="plate_result",
+            text=plate_number,
+            file_name="",
+            status="failed",
+            detail=str(exc),
+        )
 
 
 def handle_image_packet(conn, packet_type, payload, base_name):
     image_bgr = decode_packet_to_bgr(packet_type, payload)
     success, _, recognition_result = recognize_plate(image_bgr)
+    source = "image" if packet_type == PACKET_TYPE_IMAGE else "raw_image"
     if success:
-        handle_recognition_success(conn, recognition_result, base_name)
+        handle_recognition_success(conn, recognition_result, base_name, source=source)
         return
     send_result(conn, False, "plate not recognized", "", 0.0)
+    CLOUD_SYNC.report_plate_failure(reason="plate not recognized", source=source)
 
 
 def handle_text_packet(conn, payload):
@@ -254,6 +320,12 @@ def handle_text_packet(conn, payload):
     wav_data = generate_tts_wav(speech_text)
     send_audio(conn, file_name, wav_data, event_type, speech_text)
     log("返回语音文件: {} event={}".format(file_name, event_type))
+    CLOUD_SYNC.report_tts_event(
+        event_type=event_type,
+        text=speech_text,
+        file_name=file_name,
+        status="success",
+    )
 
 
 def handle_client(conn, addr):
@@ -293,6 +365,7 @@ def handle_client(conn, addr):
 def main():
     host = os.environ.get("SERVER_HOST", HOST)
     port = int(os.environ.get("SERVER_PORT", PORT))
+    maybe_pull_business_db()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, port))
