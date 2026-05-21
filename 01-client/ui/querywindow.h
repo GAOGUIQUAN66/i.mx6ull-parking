@@ -40,17 +40,30 @@ private slots:
     void onPrevPage();
     void onNextPage();
     void onPageClicked(int page);
+    void onTableChanged(int index);
+    void onExportCsvClicked();
+    void onDeleteRecordClicked();
+    void onAddBlacklistClicked();
+    void onRemoveBlacklistClicked();
+    void onViewBlacklistClicked();
 
 private:
     void setupUI();
     void loadPage(int page);
     void updatePagination();
-    void updateTable(const QList<ParkingRecord> &records);
+    void updateTable(const QStringList &headers, const QList<QStringList> &rows);
+    void showBlacklistDialog();
+    bool tableNeedsPlateFilter() const;
+    bool tableNeedsDateFilter() const;
+    bool tableNeedsStatusFilter() const;
+    QString currentTableName() const;
+    QString resolveExportDir() const;
 
     // 查询条件
     QLineEdit *m_plateEdit;
     QDateEdit *m_dateEdit;
     QComboBox *m_statusCombo;
+    QComboBox *m_tableCombo;
 
     // 表格
     QTableWidget *m_table;
@@ -73,6 +86,7 @@ private:
     QString m_queryPlate;
     QDate m_queryDate;
     int m_queryStatus; // -1:全部, 0:停车中, 1:已出库
+    QList<int> m_currentRowIds; // 当前页每行对应的真实主键ID
 };
 
 #endif // QUERYWINDOW_H

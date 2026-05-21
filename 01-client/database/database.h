@@ -45,7 +45,19 @@ struct ParkingConfig {
     int totalSpaces;        // 总车位数
     double hourlyRate;      // 每小时费率（元）
 
-    ParkingConfig() : totalSpaces(50), hourlyRate(5.0) {}
+    ParkingConfig() : totalSpaces(50), hourlyRate(6.0) {}
+};
+
+/**
+ * @brief 黑名单记录结构体
+ */
+struct BlacklistEntry {
+    int id;                 // 记录ID
+    QString plateNumber;    // 车牌号
+    QString reason;         // 拉黑原因
+    QDateTime addedTime;    // 加入时间
+
+    BlacklistEntry() : id(0) {}
 };
 
 /**
@@ -162,6 +174,14 @@ public:
      */
     double getCardBalance(const QString &rfidCard);
 
+    /**
+     * @brief RFID卡充值
+     * @param rfidCard RFID卡号
+     * @param amount 充值金额（元）
+     * @return 成功返回true
+     */
+    bool rechargeCard(const QString &rfidCard, double amount);
+
     // ========== 历史记录操作 ==========
 
     /**
@@ -199,6 +219,28 @@ public:
      * @return 是非法车辆返回true
      */
     bool isIllegalVehicle(const QString &plateNumber);
+
+    /**
+     * @brief 添加黑名单车辆
+     * @param plateNumber 车牌号
+     * @param reason 拉黑原因（可选）
+     * @return 成功返回true
+     */
+    bool addBlacklistPlate(const QString &plateNumber, const QString &reason = QString());
+
+    /**
+     * @brief 移除黑名单车辆
+     * @param plateNumber 车牌号
+     * @return 成功返回true
+     */
+    bool removeBlacklistPlate(const QString &plateNumber);
+
+    /**
+     * @brief 查询黑名单列表
+     * @param limit 返回记录上限
+     * @return 黑名单记录列表
+     */
+    QList<BlacklistEntry> getBlacklistEntries(int limit = 200);
 
     /**
      * @brief 获取最后错误信息

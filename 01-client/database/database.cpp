@@ -76,7 +76,7 @@ bool Database::createTables()
         "CREATE TABLE IF NOT EXISTS parking_config ("
         "id INTEGER PRIMARY KEY, "
         "total_spaces INTEGER DEFAULT 50, "
-        "hourly_rate REAL DEFAULT 5.0"
+        "hourly_rate REAL DEFAULT 6.0"
         ")")) {
         m_lastError = QString("创建parking_config表失败: %1").arg(query.lastError().text());
         return false;
@@ -103,7 +103,7 @@ bool Database::createTables()
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "plate_number TEXT NOT NULL UNIQUE, "
         "reason TEXT, "
-        "added_time DATETIME DEFAULT CURRENT_TIMESTAMP"
+        "added_time DATETIME DEFAULT (datetime('now','localtime'))"
         ")")) {
         m_lastError = QString("创建blacklist表失败: %1").arg(query.lastError().text());
         return false;
@@ -115,7 +115,7 @@ bool Database::createTables()
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "rfid_card TEXT NOT NULL UNIQUE, "
         "balance REAL DEFAULT 100.0, "
-        "created_time DATETIME DEFAULT CURRENT_TIMESTAMP"
+        "created_time DATETIME DEFAULT (datetime('now','localtime'))"
         ")")) {
         m_lastError = QString("创建rfid_account表失败: %1").arg(query.lastError().text());
         return false;
@@ -129,8 +129,94 @@ void Database::initDefaultConfig()
     QSqlQuery query(m_db);
     query.exec("SELECT COUNT(*) FROM parking_config");
     if (query.next() && query.value(0).toInt() == 0) {
-        query.exec("INSERT INTO parking_config (id, total_spaces, hourly_rate) VALUES (1, 50, 5.0)");
+        query.exec("INSERT INTO parking_config (id, total_spaces, hourly_rate) VALUES (1, 50, 6.0)");
+        return;
     }
+
+    // 兼容旧版本默认值 5.0 元/小时，统一到 0.1 元/分钟（6.0 元/小时）。
+    query.prepare("UPDATE parking_config SET hourly_rate = 6.0 WHERE id = 1 AND hourly_rate = 5.0");
+    query.exec();
+}
+
+bool Database::addBlacklistPlate(const QString &plateNumber, const QString &reason)
+{
+    const QString normalizedPlate = plateNumber.trimmed().toUpper();
+    if (normalizedPlate.isEmpty()) {
+        m_lastError = "车牌号不能为空";
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("INSERT OR IGNORE INTO blacklist (plate_number, reason, added_time) VALUES (?, ?, ?)");
+    query.addBindValue(normalizedPlate);
+    query.addBindValue(reason.trimmed());
+    query.addBindValue(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    if (!query.exec()) {
+        m_lastError = QString("添加黑名单失败: %1").arg(query.lastError().text());
+        return false;
+    }
+
+    // 车牌已存在时，允许更新原因，便于维护。
+    if (query.numRowsAffected() == 0) {
+        QSqlQuery updateQuery(m_db);
+        updateQuery.prepare("UPDATE blacklist SET reason = ? WHERE plate_number = ?");
+        updateQuery.addBindValue(reason.trimmed());
+        updateQuery.addBindValue(normalizedPlate);
+        if (!updateQuery.exec()) {
+            m_lastError = QString("更新黑名单原因失败: %1").arg(updateQuery.lastError().text());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool Database::removeBlacklistPlate(const QString &plateNumber)
+{
+    const QString normalizedPlate = plateNumber.trimmed().toUpper();
+    if (normalizedPlate.isEmpty()) {
+        m_lastError = "车牌号不能为空";
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM blacklist WHERE plate_number = ?");
+    query.addBindValue(normalizedPlate);
+    if (!query.exec()) {
+        m_lastError = QString("移除黑名单失败: %1").arg(query.lastError().text());
+        return false;
+    }
+
+    return true;
+}
+
+QList<BlacklistEntry> Database::getBlacklistEntries(int limit)
+{
+    QList<BlacklistEntry> list;
+    QSqlQuery query(m_db);
+    query.prepare(
+        "SELECT id, plate_number, reason, added_time "
+        "FROM blacklist ORDER BY added_time DESC, id DESC LIMIT ?"
+    );
+    query.addBindValue(qMax(1, limit));
+    if (!query.exec()) {
+        m_lastError = QString("查询黑名单失败: %1").arg(query.lastError().text());
+        return list;
+    }
+
+    while (query.next()) {
+        BlacklistEntry entry;
+        entry.id = query.value(0).toInt();
+        entry.plateNumber = query.value(1).toString();
+        entry.reason = query.value(2).toString();
+        entry.addedTime = QDateTime::fromString(query.value(3).toString(), Qt::ISODate);
+        if (!entry.addedTime.isValid()) {
+            entry.addedTime = QDateTime::fromString(query.value(3).toString(), "yyyy-MM-dd HH:mm:ss");
+        }
+        list.append(entry);
+    }
+
+    return list;
 }
 
 int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
@@ -394,9 +480,10 @@ bool Database::ensureCardAccount(const QString &rfidCard, double initialBalance)
     }
 
     QSqlQuery query(m_db);
-    query.prepare("INSERT OR IGNORE INTO rfid_account (rfid_card, balance) VALUES (?, ?)");
+    query.prepare("INSERT OR IGNORE INTO rfid_account (rfid_card, balance, created_time) VALUES (?, ?, ?)");
     query.addBindValue(rfidCard);
     query.addBindValue(initialBalance);
+    query.addBindValue(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
 
     if (!query.exec()) {
         m_lastError = QString("创建RFID账户失败: %1").arg(query.lastError().text());
@@ -426,6 +513,34 @@ double Database::getCardBalance(const QString &rfidCard)
     }
 
     return query.value(0).toDouble();
+}
+
+bool Database::rechargeCard(const QString &rfidCard, double amount)
+{
+    const QString card = rfidCard.trimmed();
+    if (card.isEmpty()) {
+        m_lastError = "RFID卡号不能为空";
+        return false;
+    }
+    if (amount <= 0.0) {
+        m_lastError = "充值金额必须大于0";
+        return false;
+    }
+
+    if (!ensureCardAccount(card)) {
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE rfid_account SET balance = balance + ? WHERE rfid_card = ?");
+    query.addBindValue(amount);
+    query.addBindValue(card);
+    if (!query.exec()) {
+        m_lastError = QString("RFID充值失败: %1").arg(query.lastError().text());
+        return false;
+    }
+
+    return true;
 }
 
 QList<ParkingRecord> Database::queryHistory(const QDate &startDate, const QDate &endDate,

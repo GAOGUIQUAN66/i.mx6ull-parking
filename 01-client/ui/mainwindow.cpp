@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "../hardware/hardwareinit.h"
+#include "../utils/globalsignals.h"
 #include <QApplication>
 #include <QDateTime>
 #include <QDebug>
@@ -27,7 +28,7 @@
 #define AUDIO_DIR_PATH "/run/media/mmcblk1p1/audio"
 
 MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
-    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware), m_todayEntryLabel(nullptr), m_todayExitLabel(nullptr), m_todayRevenueLabel(nullptr)
+    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_rechargeDialog(nullptr), m_rechargeCardLabel(nullptr), m_rechargeBalanceLabel(nullptr), m_rechargeStatusLabel(nullptr), m_rechargeCardId(), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware), m_todayEntryLabel(nullptr), m_todayExitLabel(nullptr), m_todayRevenueLabel(nullptr)
 {
     setWindowTitle("智能车库管理系统");
     setFixedSize(1024, 600);
@@ -519,11 +520,19 @@ QWidget *MainWindow::createBottomBar()
                                    "color: white;")
                                    .arg(COLOR_SUCCESS));
 
+    QPushButton *rechargeBtn = new QPushButton("刷卡充值");
+    rechargeBtn->setStyleSheet(QString(
+                                   "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %1, stop:1 #2f63a0); "
+                                   "color: white;")
+                                   .arg("#27548a"));
+
     connect(queryBtn, &QPushButton::clicked, this, &MainWindow::onQueryClicked);
+    connect(rechargeBtn, &QPushButton::clicked, this, &MainWindow::onRechargeClicked);
     connect(settingsBtn, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
 
     layout->addStretch();
     layout->addWidget(queryBtn);
+    layout->addWidget(rechargeBtn);
     layout->addWidget(settingsBtn);
     layout->addStretch();
 
@@ -543,11 +552,158 @@ void MainWindow::onQueryClicked()
     m_queryWindow->activateWindow();
 }
 
+void MainWindow::onRechargeClicked()
+{
+    if (!m_db || !m_db->isOpen()) {
+        QMessageBox::warning(this, "提示", "数据库未打开");
+        return;
+    }
+    if (m_exitDialog && m_exitDialog->isVisible()) {
+        QMessageBox::information(this, "提示", "当前有车辆待出场结算，请稍后再充值");
+        return;
+    }
+
+    ensureRechargeDialog();
+    m_rechargeCardId.clear();
+    if (m_rechargeCardLabel) {
+        m_rechargeCardLabel->setText("--");
+    }
+    if (m_rechargeBalanceLabel) {
+        m_rechargeBalanceLabel->setText("--");
+    }
+    if (m_rechargeStatusLabel) {
+        m_rechargeStatusLabel->setText("请刷卡后选择充值金额");
+    }
+
+    m_rechargeDialog->show();
+    m_rechargeDialog->raise();
+    m_rechargeDialog->activateWindow();
+}
+
 void MainWindow::onSettingsClicked()
 {
     m_settingsWindow->show();
     m_settingsWindow->raise();
     m_settingsWindow->activateWindow();
+}
+
+void MainWindow::ensureRechargeDialog()
+{
+    if (m_rechargeDialog) {
+        return;
+    }
+
+    m_rechargeDialog = new QDialog(this);
+    m_rechargeDialog->setWindowTitle("刷卡充值");
+    m_rechargeDialog->setModal(false);
+    m_rechargeDialog->setFixedSize(460, 260);
+    m_rechargeDialog->setStyleSheet(
+        "QDialog { background-color: #1a1a2e; color: white; }"
+        "QLabel { color: white; font-size: 14px; }"
+        "QPushButton { border: none; border-radius: 5px; padding: 8px 18px; font-size: 14px; font-weight: bold; }"
+    );
+
+    QVBoxLayout *layout = new QVBoxLayout(m_rechargeDialog);
+    layout->setContentsMargins(20, 16, 20, 16);
+    layout->setSpacing(12);
+
+    QLabel *tips = new QLabel("请先刷卡，系统会自动显示卡号和余额");
+    tips->setStyleSheet("color: #a0a0a0;");
+    layout->addWidget(tips);
+
+    QHBoxLayout *cardRow = new QHBoxLayout();
+    cardRow->addWidget(new QLabel("当前卡号:"));
+    m_rechargeCardLabel = new QLabel("--");
+    m_rechargeCardLabel->setStyleSheet("color: #4ecca3; font-weight: bold; font-size: 16px;");
+    cardRow->addStretch();
+    cardRow->addWidget(m_rechargeCardLabel);
+    layout->addLayout(cardRow);
+
+    QHBoxLayout *balanceRow = new QHBoxLayout();
+    balanceRow->addWidget(new QLabel("当前余额:"));
+    m_rechargeBalanceLabel = new QLabel("--");
+    m_rechargeBalanceLabel->setStyleSheet("color: #ffd93d; font-weight: bold; font-size: 16px;");
+    balanceRow->addStretch();
+    balanceRow->addWidget(m_rechargeBalanceLabel);
+    layout->addLayout(balanceRow);
+
+    m_rechargeStatusLabel = new QLabel("请刷卡后选择充值金额");
+    m_rechargeStatusLabel->setStyleSheet("color: #a0a0a0;");
+    layout->addWidget(m_rechargeStatusLabel);
+
+    QHBoxLayout *amountRow = new QHBoxLayout();
+    QPushButton *btn10 = new QPushButton("¥10");
+    QPushButton *btn20 = new QPushButton("¥20");
+    QPushButton *btn50 = new QPushButton("¥50");
+    QPushButton *btn100 = new QPushButton("¥100");
+    const QString amountBtnStyle = "background: #27548a; color: white;";
+    btn10->setStyleSheet(amountBtnStyle);
+    btn20->setStyleSheet(amountBtnStyle);
+    btn50->setStyleSheet(amountBtnStyle);
+    btn100->setStyleSheet(amountBtnStyle);
+    amountRow->addWidget(btn10);
+    amountRow->addWidget(btn20);
+    amountRow->addWidget(btn50);
+    amountRow->addWidget(btn100);
+    layout->addLayout(amountRow);
+
+    QHBoxLayout *bottomRow = new QHBoxLayout();
+    bottomRow->addStretch();
+    QPushButton *closeBtn = new QPushButton("关闭");
+    closeBtn->setStyleSheet("background: #444; color: white;");
+    bottomRow->addWidget(closeBtn);
+    layout->addLayout(bottomRow);
+
+    connect(btn10, &QPushButton::clicked, this, [this]() { rechargeByAmount(10.0); });
+    connect(btn20, &QPushButton::clicked, this, [this]() { rechargeByAmount(20.0); });
+    connect(btn50, &QPushButton::clicked, this, [this]() { rechargeByAmount(50.0); });
+    connect(btn100, &QPushButton::clicked, this, [this]() { rechargeByAmount(100.0); });
+    connect(closeBtn, &QPushButton::clicked, m_rechargeDialog, &QDialog::close);
+}
+
+void MainWindow::updateRechargeDialogInfo(const QString &cardId, double balance)
+{
+    if (!m_rechargeDialog || !m_rechargeDialog->isVisible()) {
+        return;
+    }
+    m_rechargeCardId = cardId;
+    if (m_rechargeCardLabel) {
+        m_rechargeCardLabel->setText(cardId);
+    }
+    if (m_rechargeBalanceLabel) {
+        m_rechargeBalanceLabel->setText(QString("¥%1").arg(balance, 0, 'f', 2));
+    }
+    if (m_rechargeStatusLabel) {
+        m_rechargeStatusLabel->setText("请选择充值金额");
+    }
+}
+
+void MainWindow::rechargeByAmount(double amount)
+{
+    if (!m_db || !m_db->isOpen() || !m_rechargeDialog || !m_rechargeDialog->isVisible()) {
+        return;
+    }
+    if (m_rechargeCardId.isEmpty()) {
+        if (m_rechargeStatusLabel) {
+            m_rechargeStatusLabel->setText("请先刷卡");
+            m_rechargeStatusLabel->setStyleSheet("color: #ffd93d;");
+        }
+        return;
+    }
+    if (!m_db->rechargeCard(m_rechargeCardId, amount)) {
+        if (m_rechargeStatusLabel) {
+            m_rechargeStatusLabel->setText(QString("充值失败: %1").arg(m_db->lastError()));
+            m_rechargeStatusLabel->setStyleSheet("color: #ff6b6b;");
+        }
+        return;
+    }
+    const double newBalance = m_db->getCardBalance(m_rechargeCardId);
+    updateRechargeDialogInfo(m_rechargeCardId, newBalance);
+    if (m_rechargeStatusLabel) {
+        m_rechargeStatusLabel->setText(
+            QString("充值成功: +¥%1，当前余额 ¥%2").arg(amount, 0, 'f', 2).arg(newBalance, 0, 'f', 2));
+        m_rechargeStatusLabel->setStyleSheet("color: #4ecca3;");
+    }
 }
 
 void MainWindow::onRecognitionTimer()
@@ -596,6 +752,9 @@ void MainWindow::onRfidCardDetected(const QString &cardId)
         return;
     }
 
+    // 先广播刷卡事件，供查询窗口等业务场景实时响应（如充值卡号自动填入）。
+    emit g_signals->rfidCardDetected(cardId);
+
     if (!m_db->ensureCardAccount(cardId))
     {
         qDebug() << "RFID账户初始化失败, 卡号:" << cardId << "错误:" << m_db->lastError();
@@ -612,10 +771,15 @@ void MainWindow::onRfidCardDetected(const QString &cardId)
     m_pendingRfidCard = cardId;
     m_pendingRfidTime = QDateTime::currentDateTime();
     qDebug() << "记录出场刷卡, 卡号:" << cardId << "当前余额:" << balance;
+    updateRechargeDialogInfo(cardId, balance);
 
     if (!m_exitDialog || !m_exitDialog->isVisible() || m_pendingExitPlateNumber.isEmpty())
     {
-        qDebug() << "当前无待结算出场车辆，忽略本次刷卡";
+        if (m_rechargeDialog && m_rechargeDialog->isVisible()) {
+            qDebug() << "充值模式收到刷卡, 卡号:" << cardId << "余额:" << balance;
+        } else {
+            qDebug() << "当前无待结算出场车辆，忽略本次刷卡";
+        }
         return;
     }
 
@@ -1074,6 +1238,26 @@ void MainWindow::processRecognitionResult(const QString &plateNumber, double con
                 m_hardware->alarm();
             }
             qDebug() << "入场被拒绝, 黑名单车辆:" << plateNumber;
+            markPlateCooldown(plateNumber);
+            m_pendingRfidCard.clear();
+            m_pendingRfidTime = QDateTime();
+            return;
+        }
+
+        if (m_db->getAvailableSpaces() <= 0)
+        {
+            if (m_hardware)
+            {
+                m_hardware->alarm();
+            }
+            if (m_networkClient && m_networkClient->isConnected())
+            {
+                const QString audioName = QString("parking_full_%1.wav")
+                                              .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
+                // 与蜂鸣器报警同步播报，增强现场提示效果。
+                m_networkClient->requestAudio("parking_full", "停车场车位已满，请勿入场", audioName);
+            }
+            qDebug() << "入场被拒绝, 停车场已满, 车牌:" << plateNumber;
             markPlateCooldown(plateNumber);
             m_pendingRfidCard.clear();
             m_pendingRfidTime = QDateTime();

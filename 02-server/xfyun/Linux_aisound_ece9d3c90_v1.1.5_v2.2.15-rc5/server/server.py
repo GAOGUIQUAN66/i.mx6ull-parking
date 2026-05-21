@@ -36,6 +36,9 @@ CLOUD_SYNC = CloudSyncService()
 PULL_DB_SCRIPT = os.environ.get(
     "PULL_DB_SCRIPT", os.path.join(BASE_DIR, "pull_parking_db.sh")
 )
+SYNC_EXPORTS_SCRIPT = os.environ.get(
+    "SYNC_EXPORTS_SCRIPT", os.path.join(BASE_DIR, "sync_exports_pipeline.sh")
+)
 
 
 def recv_exact(conn, size):
@@ -89,6 +92,8 @@ def _env_bool(name, default=False):
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
 
+# 识别失败事件不上报到云端
+UPLOAD_PLATE_FAILURE = _env_bool("UPLOAD_PLATE_FAILURE", False)
 
 def maybe_pull_business_db():
     """
@@ -121,6 +126,40 @@ def maybe_pull_business_db():
     except Exception as exc:
         # 不中断主服务，避免因为拉库失败导致识别服务无法启动
         log("业务库拉取失败，继续启动识别服务: {}".format(exc))
+
+
+def _run_optional_script(script_path, title, timeout_seconds=45):
+    if not os.path.exists(script_path):
+        log("{}脚本不存在，跳过: {}".format(title, script_path))
+        return
+
+    try:
+        log("启动前自动执行{}: {}".format(title, script_path))
+        result = subprocess.run(
+            ["bash", script_path],
+            cwd=BASE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=True,
+        )
+        output = result.stdout.decode("utf-8", errors="replace").strip()
+        if output:
+            log("{}完成: {}".format(title, output.splitlines()[-1]))
+    except Exception as exc:
+        # 不中断主服务，避免因为外部脚本失败影响识别主流程
+        log("{}失败，继续启动识别服务: {}".format(title, exc))
+
+
+def maybe_sync_csv_exports():
+    """
+    可选：启动 server.py 时执行CSV同步脚本（板子->Ubuntu->云端）。
+    """
+    if not _env_bool("ENABLE_EXPORT_CSV_SYNC", False):
+        return
+    if not _env_bool("AUTO_SYNC_EXPORTS_ON_START", False):
+        return
+    _run_optional_script(SYNC_EXPORTS_SCRIPT, "CSV同步", timeout_seconds=90)
 
 
 def decode_rgb565_to_bgr(raw_data, width, height):
@@ -299,7 +338,8 @@ def handle_image_packet(conn, packet_type, payload, base_name):
         handle_recognition_success(conn, recognition_result, base_name, source=source)
         return
     send_result(conn, False, "plate not recognized", "", 0.0)
-    CLOUD_SYNC.report_plate_failure(reason="plate not recognized", source=source)
+    if UPLOAD_PLATE_FAILURE:
+        CLOUD_SYNC.report_plate_failure(reason="plate not recognized", source=source)
 
 
 def handle_text_packet(conn, payload):
@@ -366,6 +406,7 @@ def main():
     host = os.environ.get("SERVER_HOST", HOST)
     port = int(os.environ.get("SERVER_PORT", PORT))
     maybe_pull_business_db()
+    maybe_sync_csv_exports()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, port))

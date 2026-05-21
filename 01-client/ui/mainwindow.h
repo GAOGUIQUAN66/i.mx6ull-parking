@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QListWidget>
 #include <QProgressBar>
+#include <QDialog>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -46,6 +47,7 @@ public:
 private slots:
     void updateTime();
     void onQueryClicked();
+    void onRechargeClicked();
     void onSettingsClicked();
     void onRfidCardDetected(const QString &cardId);
     void onRfidReadError(const QString &error);
@@ -93,6 +95,9 @@ private:
     QGroupBox* createRecentPanel();
     QWidget* createBottomBar();
     void updateOperationStats();
+    void ensureRechargeDialog();
+    void updateRechargeDialogInfo(const QString &cardId, double balance);
+    void rechargeByAmount(double amount);
 
     // 顶部区域
     QLabel *m_titleLabel;
@@ -129,6 +134,11 @@ private:
     QueryWindow *m_queryWindow;
     SettingsWindow *m_settingsWindow;
     ExitDialog *m_exitDialog;
+    QDialog *m_rechargeDialog;
+    QLabel *m_rechargeCardLabel;
+    QLabel *m_rechargeBalanceLabel;
+    QLabel *m_rechargeStatusLabel;
+    QString m_rechargeCardId;
     AudioThread *m_audioThread;
 
     // 视频相关
