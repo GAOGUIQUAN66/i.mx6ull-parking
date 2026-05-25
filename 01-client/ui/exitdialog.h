@@ -9,10 +9,9 @@
 #include <QTimer>
 
 /**
- * @brief 出场结算对话框
+ * @brief 出场结算/核验对话框
  *
- * 显示停车信息、费用明细
- * 支持等待刷卡、倒计时超时自动关闭
+ * 支持入出场抓拍对比、车牌核验异常时人工放行
  */
 class ExitDialog : public QDialog
 {
@@ -22,55 +21,52 @@ public:
     explicit ExitDialog(QWidget *parent = nullptr);
     ~ExitDialog();
 
-    /**
-     * @brief 设置出场抓拍图片
-     */
+    void setCompareImages(const QPixmap &entryImage, const QPixmap &exitImage);
     void setImage(const QPixmap &image);
 
-    /**
-     * @brief 设置停车信息
-     * @param plateNumber 车牌号
-     * @param entryTime 入场时间
-     * @param exitTime 出场时间
-     * @param duration 停车时长（分钟）
-     */
     void setParkingInfo(const QString &plateNumber, const QDateTime &entryTime,
                         const QDateTime &exitTime, int duration);
+
+    void setPlateVerifyInfo(const QString &boundPlate, const QString &recognizedPlate, bool matched);
+    void setVerifyMode(bool manualReview);
 
     void setFeeInfo(double totalFee, int durationMinutes = -1, double unitPricePerMinute = 0.1);
     void setPaymentInfo(const QString &statusText, const QString &cardId = QString(),
                         double balance = -1.0);
+    void setSettlementMode(bool settlement);
     void startCountdown(int seconds = 10);
     void stopCountdown();
 
-    /**
-     * @brief 获取车牌号
-     */
     QString getPlateNumber() const;
 
 signals:
     void cancelled();
     void timedOut();
+    void manualPassRequested();
+    void retryRecognizeRequested();
 
 private slots:
     void onCancelClicked();
     void onCountdownTick();
+    void onManualPassClicked();
+    void onRetryRecognizeClicked();
 
 private:
     void setupUI();
     void updateCountdownLabel();
+    void setLabelImage(QLabel *label, const QPixmap &image, const QString &placeholder);
 
-    // 图片区域
-    QLabel *m_imageLabel;
-    QLabel *m_imageTimeLabel;
+    QLabel *m_entryImageLabel;
+    QLabel *m_exitImageLabel;
+    QLabel *m_entryCaptionLabel;
+    QLabel *m_exitCaptionLabel;
+    QLabel *m_verifyLabel;
 
-    // 停车信息
     QLabel *m_plateLabel;
     QLabel *m_entryTimeLabel;
     QLabel *m_exitTimeLabel;
     QLabel *m_durationLabel;
 
-    // 费用信息
     QLabel *m_totalFeeLabel;
     QLabel *m_feeRuleLabel;
     QLabel *m_cardLabel;
@@ -78,14 +74,16 @@ private:
     QLabel *m_statusLabel;
     QLabel *m_countdownLabel;
 
-    // 按钮
+    QPushButton *m_retryBtn;
+    QPushButton *m_manualPassBtn;
     QPushButton *m_closeBtn;
 
-    // 倒计时
     QTimer *m_countdownTimer;
     int m_countdownValue;
+    bool m_settlementMode;
+    bool m_manualReview;
 
-    // 数据
+    QLabel *m_titleLabel;
     QString m_plateNumber;
 };
 

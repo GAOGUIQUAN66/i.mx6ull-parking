@@ -19,6 +19,8 @@ struct VehicleInfo {
     QDateTime exitTime;     // 出库时间
     int status;             // 状态：0-在场 1-已离场
     double totalFee;        // 累计费用
+    QString entryImagePath; // 入场抓拍留证路径
+    QString exitImagePath;  // 出场抓拍留证路径（已离场记录）
 
     VehicleInfo() : id(0), status(0), totalFee(0.0) {}
 };
@@ -34,6 +36,8 @@ struct ParkingRecord {
     QDateTime exitTime;     // 出库时间
     int duration;           // 停车时长（分钟）
     double fee;             // 费用
+    QString entryImagePath; // 入场抓拍路径
+    QString exitImagePath;  // 出场抓拍路径
 
     ParkingRecord() : id(0), duration(0), fee(0.0) {}
 };
@@ -95,10 +99,22 @@ public:
     /**
      * @brief 添加车辆入库记录
      * @param plateNumber 车牌号
-     * @param rfidCard RFID卡号（可选）
+     * @param rfidCard RFID卡号（入场必填）
      * @return 成功返回记录ID，失败返回-1
      */
-    int addVehicle(const QString &plateNumber, const QString &rfidCard = QString());
+    int addVehicle(const QString &plateNumber, const QString &rfidCard);
+
+    /**
+     * @brief 根据RFID卡号查询在场车辆
+     * @param rfidCard RFID卡号
+     * @return 在场记录信息，不存在则id为0
+     */
+    VehicleInfo queryActiveVehicleByRfid(const QString &rfidCard);
+
+    /**
+     * @brief 保存车辆入场抓拍路径
+     */
+    bool updateVehicleEntryImage(int vehicleId, const QString &imagePath);
 
     /**
      * @brief 车辆出库结算
@@ -106,7 +122,13 @@ public:
      * @param rfidCard 支付RFID卡号
      * @return 成功返回true
      */
-    bool checkoutVehicle(const QString &plateNumber, const QString &rfidCard);
+    bool checkoutVehicle(const QString &plateNumber, const QString &rfidCard,
+                         const QString &exitImagePath = QString());
+
+    /**
+     * @brief 删除数据表记录，并删除关联的抓拍图片文件（vehicle/history）
+     */
+    bool deleteTableRecord(const QString &tableName, int recordId);
 
     /**
      * @brief 根据车牌号查询车辆信息
@@ -169,8 +191,8 @@ public:
     bool ensureCardAccount(const QString &rfidCard, double initialBalance = 100.0);
 
     /**
-     * @brief 查询RFID卡余额
-     * @return 余额，失败返回-1
+     * @brief 查询RFID卡余额（仅查询，不会自动开户）
+     * @return 余额；卡不存在或查询失败返回-1
      */
     double getCardBalance(const QString &rfidCard);
 
@@ -260,6 +282,8 @@ private:
      * @brief 迁移vehicle表，移除旧的RFID唯一约束
      */
     bool migrateVehicleTableIfNeeded();
+    bool migrateCaptureColumnsIfNeeded();
+    static void deleteCaptureFiles(const QStringList &imagePaths);
 
     /**
      * @brief 初始化默认配置

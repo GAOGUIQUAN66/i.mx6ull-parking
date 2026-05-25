@@ -319,6 +319,20 @@ class CloudSyncService(object):
                 print("CloudSync: business sync error={}".format(exc))
             time.sleep(max(self.business_sync_interval, 1.0))
 
+    def _table_columns(self, conn, table_name):
+        rows = conn.execute("PRAGMA table_info({})".format(table_name)).fetchall()
+        return {row[1] for row in rows}
+
+    def _select_existing_columns(self, conn, table_name, columns):
+        existing = self._table_columns(conn, table_name)
+        selected = [name for name in columns if name in existing]
+        if not selected:
+            return []
+        sql = "SELECT {} FROM {} ORDER BY id ASC".format(
+            ", ".join(selected), table_name
+        )
+        return conn.execute(sql).fetchall(), selected
+
     def _sync_business_once(self):
         if not os.path.exists(self.business_db_path):
             return
@@ -335,27 +349,37 @@ class CloudSyncService(object):
             conn.close()
 
     def _sync_vehicle_rows(self, conn):
-        rows = conn.execute(
-            """
-            SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee
-            FROM vehicle
-            ORDER BY id ASC
-            """
-        ).fetchall()
+        columns = [
+            "id",
+            "plate_number",
+            "rfid_card",
+            "entry_time",
+            "exit_time",
+            "status",
+            "total_fee",
+            "entry_image",
+            "exit_image",
+        ]
+        rows, selected = self._select_existing_columns(conn, "vehicle", columns)
         for row in rows:
-            payload = dict(row)
+            payload = {name: row[name] for name in selected}
             self._sync_row_event("vehicle", row["id"], "business_vehicle_upsert", payload)
 
     def _sync_history_rows(self, conn):
-        rows = conn.execute(
-            """
-            SELECT id, plate_number, rfid_card, entry_time, exit_time, duration, fee
-            FROM history
-            ORDER BY id ASC
-            """
-        ).fetchall()
+        columns = [
+            "id",
+            "plate_number",
+            "rfid_card",
+            "entry_time",
+            "exit_time",
+            "duration",
+            "fee",
+            "entry_image",
+            "exit_image",
+        ]
+        rows, selected = self._select_existing_columns(conn, "history", columns)
         for row in rows:
-            payload = dict(row)
+            payload = {name: row[name] for name in selected}
             self._sync_row_event("history", row["id"], "business_history_upsert", payload)
 
     def _sync_rfid_rows(self, conn):

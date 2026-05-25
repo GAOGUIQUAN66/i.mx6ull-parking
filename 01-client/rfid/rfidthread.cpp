@@ -80,31 +80,14 @@ void RfidThread::run()
 
 QString RfidThread::extractCardId(QString &buffer)
 {
-    // 新模块格式: "记卡：0008038796@"，卡号为@之前的10位数字
-    // 简化逻辑：找到@，提取@之前最后10个数字
-    int atPos = buffer.indexOf('@');
-    if (atPos < 0) {
+    // 模块格式: "记卡：0008038796@" —— 必须是 @ 前紧邻的 10 位数字，避免从乱码里拼出假卡号
+    static const QRegExp kCardPattern(QStringLiteral("(\\d{10})@"));
+    const int pos = kCardPattern.indexIn(buffer);
+    if (pos < 0) {
         return QString();
     }
 
-    // 提取@之前的所有内容
-    QString dataBeforeAt = buffer.left(atPos);
-
-    // 提取所有数字
-    QString digits;
-    for (int i = dataBeforeAt.size() - 1; i >= 0 && digits.size() < 10; --i) {
-        if (dataBeforeAt.at(i).isDigit()) {
-            digits.prepend(dataBeforeAt.at(i));
-        }
-    }
-
-    // 清空已处理的数据
-    buffer.remove(0, atPos + 1);
-
-    // 验证卡号格式（10位数字）
-    if (digits.length() == 10) {
-        return digits;
-    }
-
-    return QString();
+    const QString cardId = kCardPattern.cap(1);
+    buffer.remove(0, pos + kCardPattern.matchedLength());
+    return cardId;
 }

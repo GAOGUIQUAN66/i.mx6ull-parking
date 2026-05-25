@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QTextStream>
 #include <QStandardPaths>
+#include <QTableWidgetItem>
 
 // 颜色定义
 #define COLOR_BG_DARK "#1a1a2e"
@@ -209,6 +210,11 @@ void QueryWindow::setupUI()
     connect(exportBtn, &QPushButton::clicked, this, &QueryWindow::onExportCsvClicked);
     exportBtn->setMinimumWidth(150);
 
+    m_selectAllBtn = new QPushButton(QString::fromUtf8("全选当前页"));
+    m_selectAllBtn->setStyleSheet("background: #333; border: 1px solid #555; color: white;");
+    connect(m_selectAllBtn, &QPushButton::clicked, this, &QueryWindow::onToggleSelectAllClicked);
+    m_selectAllBtn->setMinimumWidth(110);
+
     QPushButton *deleteBtn = new QPushButton("删除选中记录");
     deleteBtn->setStyleSheet("background: #7d2f2f; border: 1px solid #b34b4b; color: white;");
     connect(deleteBtn, &QPushButton::clicked, this, &QueryWindow::onDeleteRecordClicked);
@@ -242,6 +248,7 @@ void QueryWindow::setupUI()
     filterRow->addStretch();
 
     actionRow->addWidget(exportBtn);
+    actionRow->addWidget(m_selectAllBtn);
     actionRow->addWidget(deleteBtn);
     actionRow->addWidget(addBlacklistBtn);
     actionRow->addWidget(removeBlacklistBtn);
@@ -453,15 +460,17 @@ void QueryWindow::onExportCsvClicked()
     QStringList headers;
     QString selectSql;
     if (tableName == "vehicle") {
-        headers << "id" << "plate_number" << "rfid_card" << "entry_time" << "exit_time" << "status" << "total_fee";
+        headers << "id" << "plate_number" << "rfid_card" << "entry_time" << "exit_time" << "status" << "total_fee"
+                << "entry_image" << "exit_image";
         selectSql = QString(
-            "SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee "
+            "SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee, entry_image, exit_image "
             "FROM vehicle%1 ORDER BY id DESC"
         ).arg(whereSql);
     } else if (tableName == "history") {
-        headers << "id" << "plate_number" << "rfid_card" << "entry_time" << "exit_time" << "duration" << "fee";
+        headers << "id" << "plate_number" << "rfid_card" << "entry_time" << "exit_time" << "duration" << "fee"
+                << "entry_image" << "exit_image";
         selectSql = QString(
-            "SELECT id, plate_number, rfid_card, entry_time, exit_time, duration, fee "
+            "SELECT id, plate_number, rfid_card, entry_time, exit_time, duration, fee, entry_image, exit_image "
             "FROM history%1 ORDER BY id DESC"
         ).arg(whereSql);
     } else if (tableName == "rfid_account") {
@@ -523,6 +532,78 @@ void QueryWindow::onExportCsvClicked()
         QString("CSV已导出:\n%1\n\n可由Ubuntu脚本继续同步到云服务器。").arg(filePath));
 }
 
+void QueryWindow::onToggleSelectAllClicked()
+{
+    if (!m_table || m_table->rowCount() == 0) {
+        return;
+    }
+    m_selectAllChecked = !m_selectAllChecked;
+    const Qt::CheckState state = m_selectAllChecked ? Qt::Checked : Qt::Unchecked;
+    for (int i = 0; i < m_table->rowCount(); ++i) {
+        QTableWidgetItem *item = m_table->item(i, 0);
+        if (item) {
+            item->setCheckState(state);
+        }
+    }
+    if (m_selectAllBtn) {
+        m_selectAllBtn->setText(m_selectAllChecked
+                                    ? QString::fromUtf8("取消全选")
+                                    : QString::fromUtf8("全选当前页"));
+    }
+}
+
+QList<int> QueryWindow::collectSelectedRecordIds() const
+{
+    QList<int> ids;
+    if (!m_table) {
+        return ids;
+    }
+    const int rowCount = qMin(m_table->rowCount(), m_currentRowIds.size());
+    for (int i = 0; i < rowCount; ++i) {
+        const QTableWidgetItem *checkItem = m_table->item(i, 0);
+        if (checkItem && checkItem->checkState() == Qt::Checked) {
+            ids.append(m_currentRowIds.at(i));
+        }
+    }
+    return ids;
+}
+
+bool QueryWindow::deleteOneRecord(const QString &tableName, int recordId, QString *errorOut)
+{
+    if (tableName == "vehicle" || tableName == "history") {
+        if (!m_db->deleteTableRecord(tableName, recordId)) {
+            if (errorOut) {
+                *errorOut = m_db->lastError();
+            }
+            return false;
+        }
+        return true;
+    }
+
+    QSqlQuery query(QSqlDatabase::database());
+    QString deleteSql;
+    if (tableName == "rfid_account") {
+        deleteSql = "DELETE FROM rfid_account WHERE id = ?";
+    } else if (tableName == "blacklist") {
+        deleteSql = "DELETE FROM blacklist WHERE id = ?";
+    } else {
+        if (errorOut) {
+            *errorOut = QString::fromUtf8("当前数据表不支持删除");
+        }
+        return false;
+    }
+
+    query.prepare(deleteSql);
+    query.addBindValue(recordId);
+    if (!query.exec()) {
+        if (errorOut) {
+            *errorOut = query.lastError().text();
+        }
+        return false;
+    }
+    return true;
+}
+
 void QueryWindow::onDeleteRecordClicked()
 {
     if (!m_db || !m_db->isOpen()) {
@@ -536,17 +617,22 @@ void QueryWindow::onDeleteRecordClicked()
         return;
     }
 
-    const int row = m_table ? m_table->currentRow() : -1;
-    if (row < 0 || row >= m_currentRowIds.size()) {
-        showDarkMessageBox(this, QMessageBox::Warning, "提示", "请先在表格中选中一条记录");
+    const QList<int> recordIds = collectSelectedRecordIds();
+    if (recordIds.isEmpty()) {
+        showDarkMessageBox(this, QMessageBox::Warning, "提示", "请先勾选要删除的记录");
         return;
     }
 
-    const int recordId = m_currentRowIds.at(row);
     QMessageBox confirm(this);
     confirm.setIcon(QMessageBox::Question);
     confirm.setWindowTitle("确认删除");
-    confirm.setText(QString("确认删除当前记录？\n表: %1\n记录ID: %2").arg(tableName).arg(recordId));
+    const QString extraHint = (tableName == "vehicle" || tableName == "history")
+                                  ? QString::fromUtf8("\n（将同时删除关联的入场/出场抓拍图片）")
+                                  : QString();
+    confirm.setText(QString("确认删除选中的 %1 条记录？\n表: %2%3")
+                        .arg(recordIds.size())
+                        .arg(tableName)
+                        .arg(extraHint));
     confirm.setStyleSheet(
         "QLabel { color: #111111; }"
         "QPushButton { color: #111111; background: #e0e0e0; border: 1px solid #b0b0b0; "
@@ -559,29 +645,39 @@ void QueryWindow::onDeleteRecordClicked()
         return;
     }
 
-    QSqlQuery query(QSqlDatabase::database());
-    QString deleteSql;
-    if (tableName == "vehicle") {
-        deleteSql = "DELETE FROM vehicle WHERE id = ?";
-    } else if (tableName == "history") {
-        deleteSql = "DELETE FROM history WHERE id = ?";
-    } else if (tableName == "rfid_account") {
-        deleteSql = "DELETE FROM rfid_account WHERE id = ?";
-    } else if (tableName == "blacklist") {
-        deleteSql = "DELETE FROM blacklist WHERE id = ?";
+    int successCount = 0;
+    QString lastError;
+    for (int recordId : recordIds) {
+        QString err;
+        if (deleteOneRecord(tableName, recordId, &err)) {
+            ++successCount;
+        } else if (!err.isEmpty()) {
+            lastError = err;
+        }
+    }
+
+    m_selectAllChecked = false;
+    if (m_selectAllBtn) {
+        m_selectAllBtn->setText(QString::fromUtf8("全选当前页"));
+    }
+
+    if (successCount == 0) {
+        showDarkMessageBox(this, QMessageBox::Warning, "删除失败",
+                           lastError.isEmpty() ? QString::fromUtf8("删除失败") : lastError);
+        return;
+    }
+    if (successCount < recordIds.size()) {
+        showDarkMessageBox(this, QMessageBox::Warning, "部分删除失败",
+                           QString("成功 %1 条，失败 %2 条\n%3")
+                               .arg(successCount)
+                               .arg(recordIds.size() - successCount)
+                               .arg(lastError));
     } else {
-        showDarkMessageBox(this, QMessageBox::Warning, "提示", "当前数据表不支持删除");
-        return;
+        const QString okMsg = (tableName == "vehicle" || tableName == "history")
+                                  ? QString("已删除 %1 条记录及关联抓拍图片").arg(successCount)
+                                  : QString("已删除 %1 条记录").arg(successCount);
+        showDarkMessageBox(this, QMessageBox::Information, "删除成功", okMsg);
     }
-
-    query.prepare(deleteSql);
-    query.addBindValue(recordId);
-    if (!query.exec()) {
-        showDarkMessageBox(this, QMessageBox::Warning, "删除失败", query.lastError().text());
-        return;
-    }
-
-    showDarkMessageBox(this, QMessageBox::Information, "删除成功", "记录已删除");
     loadPage(m_currentPage);
 }
 
@@ -694,15 +790,17 @@ void QueryWindow::loadPage(int page)
     QStringList headers;
     QString selectSql;
     if (tableName == "vehicle") {
-        headers << "序号" << "车牌号" << "RFID卡号" << "入场时间" << "出场时间" << "停车时长" << "费用" << "状态";
+        headers << "序号" << "车牌号" << "RFID卡号" << "入场时间" << "出场时间" << "停车时长" << "费用" << "状态"
+                << "入场抓拍路径" << "出场抓拍路径";
         selectSql = QString(
-            "SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee "
+            "SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee, entry_image, exit_image "
             "FROM vehicle%1 ORDER BY id DESC LIMIT ? OFFSET ?"
         ).arg(whereSql);
     } else if (tableName == "history") {
-        headers << "序号" << "车牌号" << "RFID卡号" << "入场时间" << "出场时间" << "停车时长" << "费用";
+        headers << "序号" << "车牌号" << "RFID卡号" << "入场时间" << "出场时间" << "停车时长" << "费用"
+                << "入场抓拍路径" << "出场抓拍路径";
         selectSql = QString(
-            "SELECT id, plate_number, rfid_card, entry_time, exit_time, duration, fee "
+            "SELECT id, plate_number, rfid_card, entry_time, exit_time, duration, fee, entry_image, exit_image "
             "FROM history%1 ORDER BY id DESC LIMIT ? OFFSET ?"
         ).arg(whereSql);
     } else if (tableName == "rfid_account") {
@@ -760,7 +858,9 @@ void QueryWindow::loadPage(int page)
                     << (exitDt.isValid() ? toDisplayTime(exitTime) : "--")
                     << durationText
                     << QString("¥%1").arg(query.value(6).toDouble(), 0, 'f', 2)
-                    << (status == 0 ? "停车中" : "已出库");
+                    << (status == 0 ? "停车中" : "已出库")
+                    << (query.value(7).toString().isEmpty() ? "--" : query.value(7).toString())
+                    << (query.value(8).toString().isEmpty() ? "--" : query.value(8).toString());
             } else if (tableName == "history") {
                 const int duration = query.value(5).toInt();
                 row << QString::number(seq++)
@@ -769,7 +869,9 @@ void QueryWindow::loadPage(int page)
                     << toDisplayTime(query.value(3).toString())
                     << toDisplayTime(query.value(4).toString())
                     << QString("%1小时%2分").arg(duration / 60).arg(duration % 60)
-                    << QString("¥%1").arg(query.value(6).toDouble(), 0, 'f', 2);
+                    << QString("¥%1").arg(query.value(6).toDouble(), 0, 'f', 2)
+                    << (query.value(7).toString().isEmpty() ? "--" : query.value(7).toString())
+                    << (query.value(8).toString().isEmpty() ? "--" : query.value(8).toString());
             } else if (tableName == "rfid_account") {
                 row << QString::number(seq++)
                     << query.value(1).toString()
@@ -797,14 +899,25 @@ void QueryWindow::loadPage(int page)
 void QueryWindow::updateTable(const QStringList &headers, const QList<QStringList> &rows)
 {
     m_table->clear();
-    m_table->setColumnCount(headers.size());
-    m_table->setHorizontalHeaderLabels(headers);
+    QStringList displayHeaders;
+    displayHeaders << QString::fromUtf8("选择");
+    displayHeaders << headers;
+    m_table->setColumnCount(displayHeaders.size());
+    m_table->setHorizontalHeaderLabels(displayHeaders);
     m_table->setRowCount(rows.size());
+    m_table->setColumnWidth(0, 50);
 
     for (int i = 0; i < rows.size(); ++i) {
+        QTableWidgetItem *checkItem = new QTableWidgetItem();
+        checkItem->setFlags(checkItem->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+        checkItem->setCheckState(Qt::Unchecked);
+        checkItem->setTextAlignment(Qt::AlignCenter);
+        m_table->setItem(i, 0, checkItem);
+
         const QStringList &row = rows.at(i);
         for (int j = 0; j < row.size() && j < headers.size(); ++j) {
             QTableWidgetItem *item = new QTableWidgetItem(row.at(j));
+            const int col = j + 1;
             if (j == 0) {
                 item->setTextAlignment(Qt::AlignCenter);
             }
@@ -818,11 +931,20 @@ void QueryWindow::updateTable(const QStringList &headers, const QList<QStringLis
                 item->setBackground(parking ? QColor(COLOR_WARNING) : QColor(COLOR_SUCCESS));
                 item->setForeground(QColor("#000000"));
                 item->setTextAlignment(Qt::AlignCenter);
+            } else if (headers.value(j).contains(QString::fromUtf8("抓拍路径"))) {
+                item->setForeground(QColor(COLOR_TEXT_GRAY));
+                if (row.at(j) != "--") {
+                    item->setToolTip(row.at(j));
+                }
             }
-            m_table->setItem(i, j, item);
+            m_table->setItem(i, col, item);
         }
     }
 
+    m_selectAllChecked = false;
+    if (m_selectAllBtn) {
+        m_selectAllBtn->setText(QString::fromUtf8("全选当前页"));
+    }
     m_table->horizontalHeader()->setStretchLastSection(true);
 }
 

@@ -43,6 +43,7 @@ private slots:
     void onTableChanged(int index);
     void onExportCsvClicked();
     void onDeleteRecordClicked();
+    void onToggleSelectAllClicked();
     void onAddBlacklistClicked();
     void onRemoveBlacklistClicked();
     void onViewBlacklistClicked();
@@ -58,6 +59,8 @@ private:
     bool tableNeedsStatusFilter() const;
     QString currentTableName() const;
     QString resolveExportDir() const;
+    QList<int> collectSelectedRecordIds() const;
+    bool deleteOneRecord(const QString &tableName, int recordId, QString *errorOut);
 
     // 查询条件
     QLineEdit *m_plateEdit;
@@ -67,6 +70,8 @@ private:
 
     // 表格
     QTableWidget *m_table;
+    QPushButton *m_selectAllBtn = nullptr;
+    bool m_selectAllChecked = false;
 
     // 分页
     QLabel *m_totalLabel;

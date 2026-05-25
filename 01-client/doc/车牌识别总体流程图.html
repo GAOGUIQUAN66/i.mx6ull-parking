@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>图4.1 车牌识别总体流程图</title>
+  <title>车牌识别总体流程图</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -37,7 +37,7 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>图4.1　车牌识别总体流程图</h1>
+    <h1>车牌识别总体流程图</h1>
     <!-- 标准流程图：椭圆=起止，圆角矩形=处理，菱形=判断，平行四边形=数据/IO -->
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1120" width="100%" style="font-family:SimSun,NSimSun,'Songti SC',STSong,serif;">
       <defs>
@@ -45,11 +45,11 @@
           <path d="M0,0 L0,6 L9,3 z" fill="#37474f" />
         </marker>
         <style type="text/css"><![CDATA[
-          .t-process { font-size: 20px; font-weight: 700; fill: #111; }
-          .t-diamond { font-size: 18px; font-weight: 700; fill: #111; }
-          .t-small { font-size: 15px; font-weight: 700; fill: #333; }
-          .t-label { font-size: 15px; fill: #1565c0; font-weight: 700; }
-          .t-end { font-size: 19px; font-weight: 700; fill: #111; }
+          .t-process { font-size: 25px; font-weight: 700; fill: #111; }
+          .t-diamond { font-size: 23px; font-weight: 700; fill: #111; }
+          .t-small { font-size: 20px; font-weight: 700; fill: #333; }
+          .t-label { font-size: 20px; fill: #1565c0; font-weight: 700; }
+          .t-end { font-size: 24px; font-weight: 700; fill: #111; }
         ]]></style>
       </defs>
 
@@ -71,15 +71,15 @@
       <line x1="500" y1="234" x2="500" y2="252" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
 
       <!-- 判断：菱形 — 编码路径 -->
-      <polygon points="500,252 580,292 500,332 420,292" fill="#fff59d" stroke="#f57f17" stroke-width="1.8"/>
-      <text x="500" y="296" text-anchor="middle" class="t-diamond">QImage 或 RAW？</text>
+      <polygon points="500,252 610,292 500,332 390,292" fill="#fff59d" stroke="#f57f17" stroke-width="1.8"/>
+      <text x="505" y="300" text-anchor="middle" class="t-diamond">QImage 或 RAW？</text>
 
       <!-- 分支：左 JPEG/BMP，右 RAW -->
-      <line x1="420" y1="292" x2="260" y2="292" stroke="#37474f" stroke-width="2"/>
+      <line x1="390" y1="292" x2="260" y2="292" stroke="#37474f" stroke-width="2"/>
       <line x1="260" y1="292" x2="260" y2="316" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="330" y="278" class="t-label">QImage</text>
 
-      <line x1="580" y1="292" x2="740" y2="292" stroke="#37474f" stroke-width="2"/>
+      <line x1="610" y1="292" x2="740" y2="292" stroke="#37474f" stroke-width="2"/>
       <line x1="740" y1="292" x2="740" y2="316" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="670" y="278" class="t-label">RAW</text>
 
@@ -113,14 +113,14 @@
       <line x1="580" y1="596" x2="580" y2="624" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
 
       <!-- 判断：载荷类型 -->
-      <polygon points="580,624 660,664 580,704 500,664" fill="#90caf9" stroke="#1565c0" stroke-width="1.8"/>
-      <text x="580" y="666" text-anchor="middle" class="t-diamond">IMAGE 或 RAW？</text>
+      <polygon points="580,624 690,664 580,704 470,664" fill="#90caf9" stroke="#1565c0" stroke-width="1.8"/>
+      <text x="585" y="671" text-anchor="middle" class="t-diamond">IMAGE 或 RAW？</text>
 
-      <line x1="500" y1="664" x2="320" y2="664" stroke="#37474f" stroke-width="2"/>
+      <line x1="470" y1="664" x2="320" y2="664" stroke="#37474f" stroke-width="2"/>
       <line x1="320" y1="664" x2="320" y2="688" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="400" y="650" class="t-label">IMAGE</text>
 
-      <line x1="660" y1="664" x2="820" y2="664" stroke="#37474f" stroke-width="2"/>
+      <line x1="690" y1="664" x2="820" y2="664" stroke="#37474f" stroke-width="2"/>
       <line x1="820" y1="664" x2="820" y2="688" stroke="#37474f" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="740" y="650" class="t-label">RAW</text>
 

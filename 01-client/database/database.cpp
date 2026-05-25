@@ -1,4 +1,6 @@
 #include "database.h"
+#include <QFile>
+#include <QStringList>
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QDebug>
@@ -32,6 +34,10 @@ bool Database::open(const QString &path)
     }
 
     if (!migrateVehicleTableIfNeeded()) {
+        return false;
+    }
+
+    if (!migrateCaptureColumnsIfNeeded()) {
         return false;
     }
 
@@ -221,6 +227,11 @@ QList<BlacklistEntry> Database::getBlacklistEntries(int limit)
 
 int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
 {
+    if (rfidCard.isEmpty()) {
+        m_lastError = "入场必须绑定RFID卡号";
+        return -1;
+    }
+
     VehicleInfo activeVehicle = queryActiveVehicle(plateNumber);
     if (activeVehicle.id != 0) {
         m_lastError = QString("车辆 %1 已在库中").arg(plateNumber);
@@ -231,7 +242,7 @@ int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
     query.prepare("INSERT INTO vehicle (plate_number, rfid_card, entry_time, status) "
                   "VALUES (?, ?, ?, 0)");
     query.addBindValue(plateNumber);
-    query.addBindValue(rfidCard.isEmpty() ? QVariant() : rfidCard);
+    query.addBindValue(rfidCard);
     query.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
 
     if (!query.exec()) {
@@ -242,7 +253,53 @@ int Database::addVehicle(const QString &plateNumber, const QString &rfidCard)
     return query.lastInsertId().toInt();
 }
 
-bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCard)
+VehicleInfo Database::queryActiveVehicleByRfid(const QString &rfidCard)
+{
+    VehicleInfo info;
+    if (rfidCard.isEmpty()) {
+        return info;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("SELECT id, plate_number, rfid_card, entry_time, exit_time, status, total_fee, entry_image, exit_image "
+                  "FROM vehicle WHERE rfid_card = ? AND status = 0 ORDER BY id DESC LIMIT 1");
+    query.addBindValue(rfidCard);
+
+    if (query.exec() && query.next()) {
+        info.id = query.value(0).toInt();
+        info.plateNumber = query.value(1).toString();
+        info.rfidCard = query.value(2).toString();
+        info.entryTime = QDateTime::fromString(query.value(3).toString(), Qt::ISODate);
+        info.exitTime = QDateTime::fromString(query.value(4).toString(), Qt::ISODate);
+        info.status = query.value(5).toInt();
+        info.totalFee = query.value(6).toDouble();
+        info.entryImagePath = query.value(7).toString();
+        info.exitImagePath = query.value(8).toString();
+    }
+
+    return info;
+}
+
+bool Database::updateVehicleEntryImage(int vehicleId, const QString &imagePath)
+{
+    if (vehicleId <= 0) {
+        m_lastError = "无效的车辆记录ID";
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE vehicle SET entry_image = ? WHERE id = ?");
+    query.addBindValue(imagePath);
+    query.addBindValue(vehicleId);
+    if (!query.exec()) {
+        m_lastError = QString("更新入场抓拍路径失败: %1").arg(query.lastError().text());
+        return false;
+    }
+    return true;
+}
+
+bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCard,
+                               const QString &exitImagePath)
 {
     if (rfidCard.isEmpty()) {
         m_lastError = "出库必须刷卡";
@@ -255,8 +312,7 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
 
     QSqlQuery query(m_db);
 
-    // 获取入库时间
-    query.prepare("SELECT id, rfid_card, entry_time FROM vehicle "
+    query.prepare("SELECT id, rfid_card, entry_time, entry_image FROM vehicle "
                   "WHERE plate_number = ? AND status = 0 ORDER BY id DESC LIMIT 1");
     query.addBindValue(plateNumber);
     if (!query.exec() || !query.next()) {
@@ -266,6 +322,7 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
 
     int vehicleId = query.value(0).toInt();
     QDateTime entryTime = QDateTime::fromString(query.value(2).toString(), Qt::ISODate);
+    const QString entryImagePath = query.value(3).toString();
     QDateTime exitTime = QDateTime::currentDateTime();
     double fee = calculateFee(entryTime, exitTime);
     qint64 durationMinutes = (entryTime.secsTo(exitTime) + 59) / 60;
@@ -297,12 +354,12 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
         return false;
     }
 
-    // 更新车辆记录
-    query.prepare("UPDATE vehicle SET rfid_card = ?, exit_time = ?, status = 1, total_fee = ? "
+    query.prepare("UPDATE vehicle SET rfid_card = ?, exit_time = ?, status = 1, total_fee = ?, exit_image = ? "
                   "WHERE id = ?");
     query.addBindValue(rfidCard);
     query.addBindValue(exitTime.toString(Qt::ISODate));
     query.addBindValue(fee);
+    query.addBindValue(exitImagePath.isEmpty() ? QVariant() : exitImagePath);
     query.addBindValue(vehicleId);
 
     if (!query.exec()) {
@@ -311,15 +368,16 @@ bool Database::checkoutVehicle(const QString &plateNumber, const QString &rfidCa
         return false;
     }
 
-    // 添加历史记录
-    query.prepare("INSERT INTO history (plate_number, rfid_card, entry_time, exit_time, duration, fee) "
-                  "VALUES (?, ?, ?, ?, ?, ?)");
+    query.prepare("INSERT INTO history (plate_number, rfid_card, entry_time, exit_time, duration, fee, entry_image, exit_image) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     query.addBindValue(plateNumber);
     query.addBindValue(rfidCard.isEmpty() ? QVariant() : rfidCard);
     query.addBindValue(entryTime.toString(Qt::ISODate));
     query.addBindValue(exitTime.toString(Qt::ISODate));
     query.addBindValue(duration);
     query.addBindValue(fee);
+    query.addBindValue(entryImagePath.isEmpty() ? QVariant() : entryImagePath);
+    query.addBindValue(exitImagePath.isEmpty() ? QVariant() : exitImagePath);
     if (!query.exec()) {
         m_db.rollback();
         m_lastError = QString("写入历史记录失败: %1").arg(query.lastError().text());
@@ -500,15 +558,15 @@ double Database::getCardBalance(const QString &rfidCard)
         return -1.0;
     }
 
-    if (!ensureCardAccount(rfidCard)) {
-        return -1.0;
-    }
-
     QSqlQuery query(m_db);
     query.prepare("SELECT balance FROM rfid_account WHERE rfid_card = ?");
     query.addBindValue(rfidCard);
-    if (!query.exec() || !query.next()) {
+    if (!query.exec()) {
         m_lastError = QString("查询RFID卡余额失败: %1").arg(query.lastError().text());
+        return -1.0;
+    }
+    if (!query.next()) {
+        m_lastError = QString("RFID卡 %1 尚未开户").arg(rfidCard);
         return -1.0;
     }
 
@@ -649,9 +707,14 @@ double Database::getOccupancyRate()
 
 bool Database::isIllegalVehicle(const QString &plateNumber)
 {
+    const QString normalizedPlate = plateNumber.trimmed().toUpper();
+    if (normalizedPlate.isEmpty()) {
+        return false;
+    }
+
     QSqlQuery query(m_db);
     query.prepare("SELECT COUNT(*) FROM blacklist WHERE plate_number = ?");
-    query.addBindValue(plateNumber);
+    query.addBindValue(normalizedPlate);
 
     if (query.exec() && query.next()) {
         return query.value(0).toInt() > 0;
@@ -709,6 +772,123 @@ bool Database::migrateVehicleTableIfNeeded()
 
     if (!m_db.commit()) {
         m_lastError = QString("提交vehicle表迁移失败: %1").arg(m_db.lastError().text());
+        return false;
+    }
+
+    return true;
+}
+
+bool Database::migrateCaptureColumnsIfNeeded()
+{
+    auto tableHasColumn = [this](const QString &table, const QString &column) -> bool {
+        QSqlQuery q(m_db);
+        if (!q.exec(QString("PRAGMA table_info(%1)").arg(table))) {
+            return false;
+        }
+        while (q.next()) {
+            if (q.value(1).toString() == column) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto addColumn = [this](const QString &table, const QString &column) -> bool {
+        QSqlQuery q(m_db);
+        const QString sql = QString("ALTER TABLE %1 ADD COLUMN %2 TEXT").arg(table, column);
+        if (!q.exec(sql)) {
+            m_lastError = QString("添加%1.%2失败: %3").arg(table, column, q.lastError().text());
+            return false;
+        }
+        qDebug() << "Database: 已添加" << table << column;
+        return true;
+    };
+
+    if (!tableHasColumn("vehicle", "entry_image") && !addColumn("vehicle", "entry_image")) {
+        return false;
+    }
+    if (!tableHasColumn("vehicle", "exit_image") && !addColumn("vehicle", "exit_image")) {
+        return false;
+    }
+    if (!tableHasColumn("history", "entry_image") && !addColumn("history", "entry_image")) {
+        return false;
+    }
+    if (!tableHasColumn("history", "exit_image") && !addColumn("history", "exit_image")) {
+        return false;
+    }
+
+    return true;
+}
+
+void Database::deleteCaptureFiles(const QStringList &imagePaths)
+{
+    for (const QString &path : imagePaths) {
+        if (path.isEmpty()) {
+            continue;
+        }
+        if (!QFile::exists(path)) {
+            continue;
+        }
+        if (QFile::remove(path)) {
+            qDebug() << "已删除抓拍文件:" << path;
+        } else {
+            qDebug() << "删除抓拍文件失败:" << path;
+        }
+    }
+}
+
+bool Database::deleteTableRecord(const QString &tableName, int recordId)
+{
+    if (recordId <= 0) {
+        m_lastError = "无效的记录ID";
+        return false;
+    }
+
+    QStringList imagePaths;
+    QSqlQuery query(m_db);
+
+    if (tableName == "vehicle") {
+        query.prepare("SELECT entry_image, exit_image FROM vehicle WHERE id = ?");
+        query.addBindValue(recordId);
+        if (!query.exec() || !query.next()) {
+            m_lastError = QString("未找到vehicle记录: %1").arg(recordId);
+            return false;
+        }
+        const QString entryPath = query.value(0).toString();
+        const QString exitPath = query.value(1).toString();
+        if (!entryPath.isEmpty()) {
+            imagePaths.append(entryPath);
+        }
+        if (!exitPath.isEmpty()) {
+            imagePaths.append(exitPath);
+        }
+        query.prepare("DELETE FROM vehicle WHERE id = ?");
+    } else if (tableName == "history") {
+        query.prepare("SELECT entry_image, exit_image FROM history WHERE id = ?");
+        query.addBindValue(recordId);
+        if (!query.exec() || !query.next()) {
+            m_lastError = QString("未找到history记录: %1").arg(recordId);
+            return false;
+        }
+        const QString entryPath = query.value(0).toString();
+        const QString exitPath = query.value(1).toString();
+        if (!entryPath.isEmpty()) {
+            imagePaths.append(entryPath);
+        }
+        if (!exitPath.isEmpty()) {
+            imagePaths.append(exitPath);
+        }
+        query.prepare("DELETE FROM history WHERE id = ?");
+    } else {
+        m_lastError = "当前表不支持连带删除抓拍";
+        return false;
+    }
+
+    deleteCaptureFiles(imagePaths);
+
+    query.addBindValue(recordId);
+    if (!query.exec()) {
+        m_lastError = QString("删除记录失败: %1").arg(query.lastError().text());
         return false;
     }
 

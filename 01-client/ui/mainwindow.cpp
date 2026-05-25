@@ -26,9 +26,39 @@
 #define GATE_OPEN_MS 5000
 #define PLATE_COOLDOWN_MS GATE_OPEN_MS
 #define AUDIO_DIR_PATH "/run/media/mmcblk1p1/audio"
+#define CAPTURE_DIR_PATH "/run/media/mmcblk1p1/captures"
+
+namespace {
+
+QPixmap resolveCapturePixmap(const QPixmap &memoryPixmap, const QString &filePath, const char *tag)
+{
+    if (!filePath.isEmpty()) {
+        QPixmap fromFile;
+        if (fromFile.load(filePath) && !fromFile.isNull()) {
+            return fromFile;
+        }
+        qDebug() << tag << "文件加载失败，回退内存帧:" << filePath;
+    }
+    return memoryPixmap;
+}
+
+QPixmap loadCapturePixmapFromPath(const QString &filePath, const char *tag)
+{
+    if (filePath.isEmpty()) {
+        return QPixmap();
+    }
+    QPixmap fromFile;
+    if (fromFile.load(filePath) && !fromFile.isNull()) {
+        return fromFile;
+    }
+    qDebug() << tag << "文件加载失败:" << filePath;
+    return QPixmap();
+}
+
+}
 
 MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
-    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_rechargeDialog(nullptr), m_rechargeCardLabel(nullptr), m_rechargeBalanceLabel(nullptr), m_rechargeStatusLabel(nullptr), m_rechargeCardId(), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_recognitionTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_hardware(hardware), m_todayEntryLabel(nullptr), m_todayExitLabel(nullptr), m_todayRevenueLabel(nullptr)
+    : QMainWindow(parent), m_db(nullptr), m_queryWindow(nullptr), m_settingsWindow(nullptr), m_exitDialog(nullptr), m_rechargeDialog(nullptr), m_rechargeCardLabel(nullptr), m_rechargeBalanceLabel(nullptr), m_rechargeStatusLabel(nullptr), m_rechargeCardId(), m_audioThread(nullptr), m_updateTimer(nullptr), m_videoRefreshTimer(nullptr), m_gateCloseTimer(nullptr), m_camera(nullptr), m_videoThread(nullptr), m_rfidThread(nullptr), m_networkClient(nullptr), m_waitingForResult(false), m_pendingRfidCard(), m_pendingRfidTime(), m_capturePurpose(CapturePurpose::None), m_pendingExitVehicle(), m_pendingExitRecognizedPlate(), m_pendingExitImagePath(), m_plateCooldowns(), m_pendingExitPlateNumber(), m_pendingExitEntryTime(), m_pendingExitFee(0.0), m_lastCapturePixmap(), m_recognitionBlockedUntil(), m_gateOpenUntil(), m_gateOpenReason(), m_videoPreviewActive(false), m_exitCheckoutSucceeded(false), m_hardware(hardware), m_todayEntryLabel(nullptr), m_todayExitLabel(nullptr), m_todayRevenueLabel(nullptr)
 {
     setWindowTitle("智能车库管理系统");
     setFixedSize(1024, 600);
@@ -91,6 +121,10 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     {
         qDebug() << "数据库打开失败:" << m_db->lastError();
     }
+    else if (!ensureCaptureStorageReady())
+    {
+        qDebug() << "抓拍目录未就绪，入场/出场留证可能无法写入SD卡";
+    }
 
     // 初始化子窗口
     m_queryWindow = new QueryWindow(m_db, this);
@@ -103,6 +137,8 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     connect(m_settingsWindow, &SettingsWindow::backToMain, this, &MainWindow::onSettingsBack);
     connect(m_exitDialog, &ExitDialog::cancelled, this, &MainWindow::onExitDialogCancelled);
     connect(m_exitDialog, &ExitDialog::timedOut, this, &MainWindow::onExitDialogTimedOut);
+    connect(m_exitDialog, &ExitDialog::manualPassRequested, this, &MainWindow::onExitManualPass);
+    connect(m_exitDialog, &ExitDialog::retryRecognizeRequested, this, &MainWindow::onExitRetryRecognize);
     connect(m_exitDialog, &QDialog::finished, this, [this](int)
             { closeExitDialog(true); });
     connect(m_audioThread, &AudioThread::playbackStarted, this, &MainWindow::onAudioPlaybackStarted);
@@ -127,11 +163,6 @@ MainWindow::MainWindow(HardwareInit *hardware, QWidget *parent)
     m_videoRefreshTimer = new QTimer(this);
     connect(m_videoRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshVideoFrame);
     m_videoRefreshTimer->start(50);
-
-    // 周期上传识别，取代手动抓拍
-    m_recognitionTimer = new QTimer(this);
-    connect(m_recognitionTimer, &QTimer::timeout, this, &MainWindow::onRecognitionTimer);
-    m_recognitionTimer->start(1500);
 
     m_gateCloseTimer = new QTimer(this);
     m_gateCloseTimer->setSingleShot(true);
@@ -706,42 +737,159 @@ void MainWindow::rechargeByAmount(double amount)
     }
 }
 
-void MainWindow::onRecognitionTimer()
+bool MainWindow::isPendingRfidValid() const
+{
+    return !m_pendingRfidCard.isEmpty() &&
+           m_pendingRfidTime.isValid() &&
+           m_pendingRfidTime.msecsTo(QDateTime::currentDateTime()) <= RFID_VALID_WINDOW_MS;
+}
+
+void MainWindow::clearPendingRfid()
+{
+    m_pendingRfidCard.clear();
+    m_pendingRfidTime = QDateTime();
+}
+
+void MainWindow::clearPendingExitFlow()
+{
+    m_capturePurpose = CapturePurpose::None;
+    m_pendingExitVehicle = VehicleInfo();
+    m_pendingExitRecognizedPlate.clear();
+    m_pendingExitImagePath.clear();
+    m_pendingExitPlateNumber.clear();
+    m_pendingExitEntryTime = QDateTime();
+    m_pendingExitFee = 0.0;
+    m_exitCheckoutSucceeded = false;
+}
+
+QString MainWindow::normalizePlate(const QString &plateNumber)
+{
+    return plateNumber.trimmed().toUpper().remove(QLatin1Char(' '));
+}
+
+QString MainWindow::captureDirectoryPath() const
+{
+    return QString::fromUtf8(CAPTURE_DIR_PATH);
+}
+
+bool MainWindow::ensureCaptureStorageReady() const
+{
+    const QString sdRoot = QString::fromUtf8("/run/media/mmcblk1p1");
+    if (!QDir(sdRoot).exists()) {
+        qDebug() << "SD卡未挂载，无法准备抓拍目录:" << sdRoot;
+        return false;
+    }
+
+    QDir dir(captureDirectoryPath());
+    if (!dir.exists() && !dir.mkpath(".")) {
+        qDebug() << "创建抓拍目录失败:" << dir.absolutePath();
+        return false;
+    }
+
+    QFile probe(dir.filePath(QStringLiteral(".write_probe")));
+    if (!probe.open(QIODevice::WriteOnly)) {
+        qDebug() << "抓拍目录不可写:" << dir.absolutePath() << probe.errorString();
+        return false;
+    }
+    probe.write("ok");
+    probe.close();
+    probe.remove();
+    qDebug() << "抓拍目录就绪:" << dir.absolutePath();
+    return true;
+}
+
+QString MainWindow::saveVehicleCaptureImage(int vehicleId, const QString &tag, const QPixmap &pixmap) const
+{
+    if (vehicleId <= 0 || pixmap.isNull()) {
+        qDebug() << "抓拍保存跳过: vehicleId=" << vehicleId << "pixmapNull=" << pixmap.isNull();
+        return QString();
+    }
+
+    if (!ensureCaptureStorageReady()) {
+        return QString();
+    }
+
+    const QString baseName = QString("%1_%2_%3")
+                                 .arg(tag)
+                                 .arg(vehicleId)
+                                 .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
+    const QImage image = pixmap.toImage();
+    if (image.isNull()) {
+        qDebug() << "抓拍图像转换失败:" << baseName;
+        return QString();
+    }
+
+    struct FormatTry {
+        const char *extension;
+        const char *format;
+        int quality;
+    };
+    static const FormatTry kFormats[] = {
+        {"jpg", "JPEG", 90},
+        {"png", "PNG", -1},
+        {"bmp", "BMP", -1},
+    };
+
+    QDir dir(captureDirectoryPath());
+    for (const FormatTry &fmt : kFormats) {
+        const QString fullPath = dir.filePath(QString("%1.%2").arg(baseName, fmt.extension));
+        const bool saved = (fmt.quality > 0)
+                               ? image.save(fullPath, fmt.format, fmt.quality)
+                               : image.save(fullPath, fmt.format);
+        if (saved && QFileInfo::exists(fullPath) && QFileInfo(fullPath).size() > 0) {
+            qDebug() << "抓拍已保存:" << fullPath << "format=" << fmt.format;
+            return fullPath;
+        }
+        qDebug() << "抓拍保存失败:" << fullPath << "format=" << fmt.format;
+    }
+
+    return QString();
+}
+
+bool MainWindow::triggerCaptureForRecognition()
 {
     if (m_waitingForResult)
     {
-        return;
+        qDebug() << "识别进行中，跳过抓拍";
+        return false;
     }
 
     if (m_recognitionBlockedUntil.isValid() &&
         QDateTime::currentDateTime() < m_recognitionBlockedUntil)
     {
-        return;
+        qDebug() << "闸门开启冷却中，跳过抓拍";
+        return false;
     }
 
-    if (m_exitDialog && m_exitDialog->isVisible())
+    if (m_exitDialog && m_exitDialog->isVisible() &&
+        m_capturePurpose != CapturePurpose::Exit &&
+        m_capturePurpose != CapturePurpose::InvalidExit)
     {
-        return;
+        return false;
     }
 
     if ((m_queryWindow && m_queryWindow->isVisible()) ||
         (m_settingsWindow && m_settingsWindow->isVisible()))
     {
-        return;
+        qDebug() << "子窗口打开中，跳过抓拍";
+        return false;
     }
 
     if (!m_networkClient || !m_networkClient->isConnected())
     {
-        return;
+        qDebug() << "识别服务器未连接，无法抓拍识别";
+        return false;
     }
 
     if (!m_videoThread || !m_camera || m_camera->state() != V4L2Camera::StateStreaming)
     {
-        return;
+        qDebug() << "摄像头未就绪，无法抓拍";
+        return false;
     }
 
     m_waitingForResult = true;
     m_videoThread->triggerCapture();
+    return true;
 }
 
 void MainWindow::onRfidCardDetected(const QString &cardId)
@@ -755,64 +903,122 @@ void MainWindow::onRfidCardDetected(const QString &cardId)
     // 先广播刷卡事件，供查询窗口等业务场景实时响应（如充值卡号自动填入）。
     emit g_signals->rfidCardDetected(cardId);
 
+    if (m_rechargeDialog && m_rechargeDialog->isVisible())
+    {
+        if (!m_db->ensureCardAccount(cardId))
+        {
+            qDebug() << "RFID账户初始化失败, 卡号:" << cardId << "错误:" << m_db->lastError();
+            return;
+        }
+        const double balance = m_db->getCardBalance(cardId);
+        updateRechargeDialogInfo(cardId, balance >= 0 ? balance : 0.0);
+        qDebug() << "充值模式收到刷卡, 卡号:" << cardId << "余额:" << balance;
+        return;
+    }
+
+    if (m_waitingForResult &&
+        m_capturePurpose != CapturePurpose::Exit &&
+        m_capturePurpose != CapturePurpose::DuplicateEntry &&
+        m_capturePurpose != CapturePurpose::InvalidExit)
+    {
+        qDebug() << "识别进行中，忽略刷卡, 卡号:" << cardId;
+        return;
+    }
+
+    if (m_exitDialog && m_exitDialog->isVisible())
+    {
+        if (m_db->queryActiveVehicleByRfid(cardId).id == 0)
+        {
+            m_pendingRfidCard = cardId;
+            m_pendingRfidTime = QDateTime::currentDateTime();
+            m_capturePurpose = CapturePurpose::InvalidExit;
+            qDebug() << "未入场却出场刷卡, 卡号:" << cardId;
+            if (!triggerCaptureForRecognition())
+            {
+                clearPendingRfid();
+                m_capturePurpose = CapturePurpose::None;
+            }
+        }
+        return;
+    }
+
+    // 出场：刷卡 -> 抓拍 -> 识别车牌须与绑定车牌一致
+    const VehicleInfo parkedByCard = m_db->queryActiveVehicleByRfid(cardId);
+    if (parkedByCard.id != 0)
+    {
+        if (parkedByCard.rfidCard != cardId)
+        {
+            return;
+        }
+
+        const bool gateOpenForEntry = m_gateOpenUntil.isValid() &&
+                                      QDateTime::currentDateTime() < m_gateOpenUntil &&
+                                      m_gateOpenReason.contains(QString::fromUtf8("入场"));
+        if (gateOpenForEntry)
+        {
+            m_pendingRfidCard = cardId;
+            m_pendingRfidTime = QDateTime::currentDateTime();
+            m_capturePurpose = CapturePurpose::DuplicateEntry;
+            qDebug() << "重复入场刷卡, 卡号:" << cardId << "车牌:" << parkedByCard.plateNumber;
+            if (!triggerCaptureForRecognition())
+            {
+                clearPendingRfid();
+                m_capturePurpose = CapturePurpose::None;
+            }
+            return;
+        }
+
+        if (!m_db->ensureCardAccount(cardId))
+        {
+            qDebug() << "RFID账户初始化失败, 卡号:" << cardId << "错误:" << m_db->lastError();
+            return;
+        }
+        const double balance = m_db->getCardBalance(cardId);
+        updateRechargeDialogInfo(cardId, balance >= 0 ? balance : 0.0);
+
+        m_pendingExitVehicle = parkedByCard;
+        m_pendingExitPlateNumber = parkedByCard.plateNumber;
+        m_pendingExitEntryTime = parkedByCard.entryTime;
+        m_pendingRfidCard = cardId;
+        m_pendingRfidTime = QDateTime::currentDateTime();
+        m_capturePurpose = CapturePurpose::Exit;
+        qDebug() << "出场刷卡触发抓拍核验, 卡号:" << cardId << "绑定车牌:" << parkedByCard.plateNumber;
+
+        if (!triggerCaptureForRecognition())
+        {
+            clearPendingExitFlow();
+            clearPendingRfid();
+        }
+        return;
+    }
+
+    // 入场：刷卡 -> 抓拍 -> 识别 -> 绑定入库
+    if (m_recognitionBlockedUntil.isValid() &&
+        QDateTime::currentDateTime() < m_recognitionBlockedUntil)
+    {
+        qDebug() << "闸门冷却中，忽略入场刷卡";
+        return;
+    }
+
     if (!m_db->ensureCardAccount(cardId))
     {
         qDebug() << "RFID账户初始化失败, 卡号:" << cardId << "错误:" << m_db->lastError();
         return;
     }
+    const double balance = m_db->getCardBalance(cardId);
+    updateRechargeDialogInfo(cardId, balance >= 0 ? balance : 0.0);
 
-    double balance = m_db->getCardBalance(cardId);
-    if (balance < 0)
-    {
-        qDebug() << "RFID余额查询失败, 卡号:" << cardId << "错误:" << m_db->lastError();
-        return;
-    }
-
+    clearPendingExitFlow();
+    m_capturePurpose = CapturePurpose::Entry;
     m_pendingRfidCard = cardId;
     m_pendingRfidTime = QDateTime::currentDateTime();
-    qDebug() << "记录出场刷卡, 卡号:" << cardId << "当前余额:" << balance;
-    updateRechargeDialogInfo(cardId, balance);
+    qDebug() << "入场刷卡触发抓拍, 卡号:" << cardId << "余额:" << balance;
 
-    if (!m_exitDialog || !m_exitDialog->isVisible() || m_pendingExitPlateNumber.isEmpty())
+    if (!triggerCaptureForRecognition())
     {
-        if (m_rechargeDialog && m_rechargeDialog->isVisible()) {
-            qDebug() << "充值模式收到刷卡, 卡号:" << cardId << "余额:" << balance;
-        } else {
-            qDebug() << "当前无待结算出场车辆，忽略本次刷卡";
-        }
-        return;
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
     }
-
-    m_exitDialog->setPaymentInfo("刷卡成功，正在校验余额并结算", cardId, balance);
-
-    if (!m_db->checkoutVehicle(m_pendingExitPlateNumber, cardId))
-    {
-        qDebug() << "出场结算失败, 车牌:" << m_pendingExitPlateNumber
-                 << "刷卡:" << cardId
-                 << "错误:" << m_db->lastError();
-        m_exitDialog->setPaymentInfo(QString("刷卡失败: %1").arg(m_db->lastError()), cardId, balance);
-        return;
-    }
-
-    double remainBalance = m_db->getCardBalance(cardId);
-    qDebug() << "出场结算成功, 车牌:" << m_pendingExitPlateNumber
-             << "刷卡:" << cardId
-             << "扣费:" << m_pendingExitFee
-             << "剩余余额:" << remainBalance;
-    m_exitDialog->stopCountdown();
-    m_exitDialog->setPaymentInfo(
-        QString("刷卡成功，已扣费 ¥%1，剩余余额 ¥%2")
-            .arg(m_pendingExitFee, 0, 'f', 2)
-            .arg(remainBalance, 0, 'f', 2),
-        cardId,
-        remainBalance);
-    markPlateCooldown(m_pendingExitPlateNumber);
-    openGateForPassage(QString("车辆 %1 已出场").arg(m_pendingExitPlateNumber));
-    m_pendingExitPlateNumber.clear();
-    updateParkingStatus();
-    updateRecentEntries();
-    QTimer::singleShot(1500, this, [this]()
-                       { closeExitDialog(true); });
 }
 
 void MainWindow::onRfidReadError(const QString &error)
@@ -931,12 +1137,8 @@ void MainWindow::onExitDialogCancelled()
 
 void MainWindow::onExitDialogTimedOut()
 {
-    qDebug() << "出场等待刷卡超时";
-    if (!m_pendingExitPlateNumber.isEmpty())
-    {
-        markPlateCooldown(m_pendingExitPlateNumber);
-    }
-    closeExitDialog(true);
+    qDebug() << "出场结算页倒计时结束，自动关闭";
+    finishExitAfterSettlement();
 }
 
 void MainWindow::onGateCloseTimeout()
@@ -948,16 +1150,27 @@ void MainWindow::onGateCloseTimeout()
 
 void MainWindow::refreshVideoFrame()
 {
-    if (!m_videoThread)
+    if (!m_videoThread || !m_videoLabel)
         return;
 
-    QImage frame = m_videoThread->takeLatestFrame();
+    const QImage frame = m_videoThread->takeLatestFrame();
     if (frame.isNull())
         return;
 
-    // 缩放到显示区域大小
-    QPixmap pixmap = QPixmap::fromImage(frame);
-    QPixmap scaled = pixmap.scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation);
+    if (!m_videoPreviewActive) {
+        m_videoPreviewActive = true;
+        m_videoLabel->setText(QString());
+    }
+
+    const QSize labelSize = m_videoLabel->size();
+    if (labelSize.width() <= 0 || labelSize.height() <= 0)
+        return;
+
+    const QPixmap scaled = QPixmap::fromImage(frame).scaled(
+        labelSize, Qt::KeepAspectRatio, Qt::FastTransformation);
+    if (scaled.isNull())
+        return;
+
     m_videoLabel->setPixmap(scaled);
 }
 
@@ -1008,9 +1221,36 @@ void MainWindow::onRecognizeResultReady(const NetworkClient::RecognizeResult &re
     }
     else
     {
-        // 识别失败
         QString errorMsg = result.errorMessage.isEmpty() ? "车牌识别失败，请重试" : result.errorMessage;
-        qDebug() << "识别失败, RFID卡:" << m_pendingRfidCard << "错误:" << errorMsg;
+        qDebug() << "识别失败, 模式:" << static_cast<int>(m_capturePurpose)
+                 << "RFID:" << m_pendingRfidCard << "错误:" << errorMsg;
+
+        if (m_capturePurpose == CapturePurpose::Exit && m_pendingExitVehicle.id != 0)
+        {
+            if (m_hardware)
+            {
+                m_hardware->alarm(3, 150);
+            }
+            setGateOpened(false);
+            showExitVerifyDialog(
+                m_pendingExitVehicle,
+                QString(),
+                false,
+                QString("出场识别失败: %1，请重新识别或再次刷卡").arg(errorMsg));
+        }
+        else if (m_capturePurpose == CapturePurpose::DuplicateEntry)
+        {
+            rejectRfidWithBlacklist(QString(), QString::fromUtf8("重复入场刷卡(识别失败)"));
+        }
+        else if (m_capturePurpose == CapturePurpose::InvalidExit)
+        {
+            rejectRfidWithBlacklist(QString(), QString::fromUtf8("未入场却出场刷卡(识别失败)"));
+        }
+        else
+        {
+            clearPendingRfid();
+            m_capturePurpose = CapturePurpose::None;
+        }
     }
 
     m_waitingForResult = false;
@@ -1089,6 +1329,11 @@ void MainWindow::onAudioPlaybackError(const QString &filePath, const QString &er
 
 void MainWindow::resetCaptureFlow()
 {
+    if (m_capturePurpose == CapturePurpose::Entry)
+    {
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
+    }
 }
 
 QString MainWindow::audioDirectoryPath() const
@@ -1155,12 +1400,128 @@ void MainWindow::updateGateStatusDisplay()
     m_gateStatusLabel->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(COLOR_SUCCESS));
 }
 
-void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
+bool MainWindow::completeExitCheckout(const QString &reasonTag)
 {
-    if (!m_exitDialog)
+    if (!m_db || m_pendingExitVehicle.id == 0 || m_pendingRfidCard.isEmpty())
+    {
+        return false;
+    }
+
+    if (m_pendingExitImagePath.isEmpty() && !m_lastCapturePixmap.isNull())
+    {
+        m_pendingExitImagePath = saveVehicleCaptureImage(m_pendingExitVehicle.id, "exit", m_lastCapturePixmap);
+        if (m_pendingExitImagePath.isEmpty())
+        {
+            qDebug() << "出库前补存出场抓拍失败，数据库将不写入exit_image路径";
+        }
+    }
+
+    const QString plate = m_pendingExitVehicle.plateNumber;
+    const QString cardId = m_pendingRfidCard;
+
+    if (!m_db->checkoutVehicle(plate, cardId, m_pendingExitImagePath))
+    {
+        qDebug() << "出场结算失败:" << reasonTag << plate << cardId << m_db->lastError();
+        m_exitCheckoutSucceeded = false;
+        if (reasonTag != QStringLiteral("auto")) {
+            showExitVerifyDialog(
+                m_pendingExitVehicle,
+                m_pendingExitRecognizedPlate,
+                true,
+                QString("车牌已核验，但结算失败: %1").arg(m_db->lastError()));
+        }
+        return false;
+    }
+
+    m_exitCheckoutSucceeded = true;
+    qDebug() << "出场成功:" << reasonTag << plate << "扣费约:" << m_pendingExitFee;
+    markPlateCooldown(plate);
+    updateParkingStatus();
+    updateRecentEntries();
+
+    if (reasonTag == QStringLiteral("auto")) {
+        return true;
+    }
+
+    openGateForPassage(QString("车辆 %1 已出场").arg(plate));
+    closeExitDialog(true);
+    m_exitCheckoutSucceeded = false;
+    return true;
+}
+
+void MainWindow::showExitSettlementDialog(const VehicleInfo &vehicleInfo, const QString &recognizedPlate)
+{
+    if (!m_exitDialog || !m_db) {
+        return;
+    }
+
+    QDateTime now = QDateTime::currentDateTime();
+    qint64 durationMinutes = (vehicleInfo.entryTime.secsTo(now) + 59) / 60;
+    const int duration = qMax(1, static_cast<int>(durationMinutes));
+    const double fee = m_db->calculateFee(vehicleInfo.entryTime, now);
+
+    m_pendingExitPlateNumber = vehicleInfo.plateNumber;
+    m_pendingExitEntryTime = vehicleInfo.entryTime;
+    m_pendingExitFee = fee;
+
+    const QPixmap entryPixmap = loadCapturePixmapFromPath(vehicleInfo.entryImagePath, "入场抓拍");
+    const QPixmap exitPixmap = resolveCapturePixmap(m_lastCapturePixmap, m_pendingExitImagePath, "出场抓拍");
+
+    m_exitDialog->setSettlementMode(true);
+    m_exitDialog->setCompareImages(entryPixmap, exitPixmap);
+    m_exitDialog->setParkingInfo(vehicleInfo.plateNumber, vehicleInfo.entryTime, now, duration);
+    m_exitDialog->setPlateVerifyInfo(vehicleInfo.plateNumber, recognizedPlate, true);
+    m_exitDialog->setFeeInfo(fee, duration, 0.1);
+
+    const double balanceBefore = m_db->getCardBalance(m_pendingRfidCard);
+    m_exitDialog->setPaymentInfo(
+        QString::fromUtf8("正在结算，请稍候..."),
+        m_pendingRfidCard,
+        balanceBefore);
+    m_exitDialog->show();
+    m_exitDialog->raise();
+    m_exitDialog->activateWindow();
+
+    if (completeExitCheckout(QStringLiteral("auto"))) {
+        const double balanceAfter = m_db->getCardBalance(m_pendingRfidCard);
+        m_exitDialog->setPaymentInfo(
+            QString::fromUtf8("刷卡成功，已扣费 ¥%1，剩余余额 ¥%2")
+                .arg(m_pendingExitFee, 0, 'f', 2)
+                .arg(balanceAfter, 0, 'f', 2),
+            m_pendingRfidCard,
+            balanceAfter);
+        m_exitDialog->startCountdown(10);
+        return;
+    }
+
+    m_exitDialog->setSettlementMode(false);
+    showExitVerifyDialog(
+        m_pendingExitVehicle,
+        recognizedPlate,
+        true,
+        QString::fromUtf8("车牌已核验，但结算失败: %1").arg(m_db->lastError()));
+}
+
+void MainWindow::finishExitAfterSettlement()
+{
+    if (m_exitCheckoutSucceeded && m_pendingExitVehicle.id != 0) {
+        openGateForPassage(
+            QString::fromUtf8("车辆 %1 已出场").arg(m_pendingExitVehicle.plateNumber));
+    }
+    m_exitCheckoutSucceeded = false;
+    closeExitDialog(true);
+}
+
+void MainWindow::showExitVerifyDialog(const VehicleInfo &vehicleInfo, const QString &recognizedPlate,
+                                      bool plateMatched, const QString &statusText)
+{
+    if (!m_exitDialog || !m_db)
     {
         return;
     }
+
+    m_exitDialog->setSettlementMode(false);
+    m_exitDialog->setVerifyMode(!plateMatched);
 
     QDateTime now = QDateTime::currentDateTime();
     qint64 durationMinutes = (vehicleInfo.entryTime.secsTo(now) + 59) / 60;
@@ -1170,29 +1531,28 @@ void MainWindow::showExitDialog(const VehicleInfo &vehicleInfo)
     m_pendingExitPlateNumber = vehicleInfo.plateNumber;
     m_pendingExitEntryTime = vehicleInfo.entryTime;
     m_pendingExitFee = fee;
-    m_pendingRfidCard.clear();
-    m_pendingRfidTime = QDateTime();
 
-    m_exitDialog->setImage(m_lastCapturePixmap);
+    const QPixmap entryPixmap = loadCapturePixmapFromPath(vehicleInfo.entryImagePath, "入场抓拍");
+    const QPixmap exitPixmap = resolveCapturePixmap(m_lastCapturePixmap, m_pendingExitImagePath, "出场抓拍");
+
+    m_exitDialog->setCompareImages(entryPixmap, exitPixmap);
     m_exitDialog->setParkingInfo(vehicleInfo.plateNumber, vehicleInfo.entryTime, now, duration);
+    m_exitDialog->setPlateVerifyInfo(vehicleInfo.plateNumber, recognizedPlate, plateMatched);
     m_exitDialog->setFeeInfo(fee, duration, 0.1);
-    m_exitDialog->setPaymentInfo("请在 10 秒内刷卡完成出场");
-    m_exitDialog->startCountdown(10);
+
+    const double balance = m_db->getCardBalance(m_pendingRfidCard);
+    m_exitDialog->setPaymentInfo(statusText, m_pendingRfidCard, balance);
     m_exitDialog->show();
     m_exitDialog->raise();
     m_exitDialog->activateWindow();
 
-    if (m_recognitionTimer)
+    if (!plateMatched)
     {
-        m_recognitionTimer->stop();
+        setGateOpened(false);
     }
-
-    qDebug() << "识别到在场车辆，弹出出场窗口, 车牌:" << vehicleInfo.plateNumber
-             << "停车分钟:" << duration
-             << "应付金额:" << fee;
 }
 
-void MainWindow::closeExitDialog(bool resumeRecognition)
+void MainWindow::closeExitDialog(bool clearPending)
 {
     if (m_exitDialog && m_exitDialog->isVisible())
     {
@@ -1200,15 +1560,33 @@ void MainWindow::closeExitDialog(bool resumeRecognition)
         m_exitDialog->hide();
     }
 
-    m_pendingExitPlateNumber.clear();
-    m_pendingExitEntryTime = QDateTime();
-    m_pendingExitFee = 0.0;
-    m_pendingRfidCard.clear();
-    m_pendingRfidTime = QDateTime();
-
-    if (resumeRecognition && m_recognitionTimer && !m_recognitionTimer->isActive())
+    if (clearPending)
     {
-        m_recognitionTimer->start(1500);
+        clearPendingRfid();
+        clearPendingExitFlow();
+    }
+}
+
+void MainWindow::onExitManualPass()
+{
+    qDebug() << "人工核查放行, 车牌:" << m_pendingExitVehicle.plateNumber;
+    completeExitCheckout("manual");
+}
+
+void MainWindow::onExitRetryRecognize()
+{
+    if (m_pendingExitVehicle.id == 0 || m_pendingRfidCard.isEmpty())
+    {
+        return;
+    }
+
+    m_capturePurpose = CapturePurpose::Exit;
+    m_pendingExitRecognizedPlate.clear();
+    qDebug() << "重新识别出场车牌, 绑定:" << m_pendingExitVehicle.plateNumber;
+
+    if (!triggerCaptureForRecognition() && m_exitDialog)
+    {
+        m_exitDialog->setPaymentInfo("重新抓拍失败，请检查摄像头与识别服务", m_pendingRfidCard, -1);
     }
 }
 
@@ -1218,71 +1596,187 @@ void MainWindow::processRecognitionResult(const QString &plateNumber, double con
 
     if (!m_db || !m_db->isOpen())
     {
-        qDebug() << "识别结果被忽略，数据库未打开";
+        clearPendingRfid();
+        clearPendingExitFlow();
         return;
     }
 
+    if (m_capturePurpose == CapturePurpose::Exit)
+    {
+        processExitRecognitionResult(plateNumber);
+        return;
+    }
+
+    if (m_capturePurpose == CapturePurpose::DuplicateEntry)
+    {
+        rejectRfidWithBlacklist(plateNumber, QString::fromUtf8("重复入场刷卡"));
+        return;
+    }
+
+    if (m_capturePurpose == CapturePurpose::InvalidExit)
+    {
+        rejectRfidWithBlacklist(plateNumber, QString::fromUtf8("未入场却出场刷卡"));
+        return;
+    }
+
+    if (isPendingRfidValid() && m_capturePurpose == CapturePurpose::Entry)
+    {
+        processEntryRecognitionResult(plateNumber);
+    }
+}
+
+void MainWindow::rejectRfidWithBlacklist(const QString &plateNumber, const QString &reason)
+{
+    if (m_hardware)
+    {
+        m_hardware->alarm();
+    }
+
+    const QString plate = normalizePlate(plateNumber);
+    if (!plate.isEmpty() && m_db)
+    {
+        m_db->addBlacklistPlate(plate, reason);
+        qDebug() << "异常刷卡已拉黑, 车牌:" << plate << "原因:" << reason;
+    }
+    else
+    {
+        qDebug() << "异常刷卡(未识别到车牌), 原因:" << reason;
+    }
+
+    if (!plate.isEmpty())
+    {
+        markPlateCooldown(plate);
+    }
+    clearPendingRfid();
+    clearPendingExitFlow();
+    m_capturePurpose = CapturePurpose::None;
+}
+
+void MainWindow::processEntryRecognitionResult(const QString &plateNumber)
+{
     if (isPlateInCooldown(plateNumber))
     {
-        qDebug() << "忽略冷却中的车牌识别结果:" << plateNumber;
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
         return;
     }
 
-    VehicleInfo activeVehicle = m_db->queryActiveVehicle(plateNumber);
-    if (activeVehicle.id == 0)
+    const QString rfidCard = m_pendingRfidCard;
+
+    if (m_db->queryActiveVehicleByRfid(rfidCard).id != 0)
     {
-        if (m_db->isIllegalVehicle(plateNumber))
-        {
-            if (m_hardware)
-            {
-                m_hardware->alarm();
-            }
-            qDebug() << "入场被拒绝, 黑名单车辆:" << plateNumber;
-            markPlateCooldown(plateNumber);
-            m_pendingRfidCard.clear();
-            m_pendingRfidTime = QDateTime();
-            return;
-        }
-
-        if (m_db->getAvailableSpaces() <= 0)
-        {
-            if (m_hardware)
-            {
-                m_hardware->alarm();
-            }
-            if (m_networkClient && m_networkClient->isConnected())
-            {
-                const QString audioName = QString("parking_full_%1.wav")
-                                              .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
-                // 与蜂鸣器报警同步播报，增强现场提示效果。
-                m_networkClient->requestAudio("parking_full", "停车场车位已满，请勿入场", audioName);
-            }
-            qDebug() << "入场被拒绝, 停车场已满, 车牌:" << plateNumber;
-            markPlateCooldown(plateNumber);
-            m_pendingRfidCard.clear();
-            m_pendingRfidTime = QDateTime();
-            return;
-        }
-
-        int recordId = m_db->addVehicle(plateNumber);
-        if (recordId < 0)
-        {
-            qDebug() << "自动入场落库失败, 车牌:" << plateNumber
-                     << "错误:" << m_db->lastError();
-            m_pendingRfidCard.clear();
-            m_pendingRfidTime = QDateTime();
-            return;
-        }
-
-        qDebug() << "自动入场成功, recordId:" << recordId << "车牌:" << plateNumber;
-        markPlateCooldown(plateNumber);
-        openGateForPassage(QString("车辆 %1 入场").arg(plateNumber));
-        m_pendingRfidCard.clear();
-        m_pendingRfidTime = QDateTime();
-        updateParkingStatus();
-        updateRecentEntries();
+        qDebug() << "该卡已入场，请勿重复刷卡, 卡号:" << rfidCard;
+        rejectRfidWithBlacklist(plateNumber, QString::fromUtf8("重复入场刷卡"));
         return;
     }
 
-    showExitDialog(activeVehicle);
+    if (m_db->queryActiveVehicle(plateNumber).id != 0)
+    {
+        qDebug() << "车牌已在场，忽略本次入场识别, 车牌:" << plateNumber;
+        rejectRfidWithBlacklist(plateNumber, QString::fromUtf8("重复入场(车牌已在场)"));
+        return;
+    }
+
+    if (m_db->isIllegalVehicle(plateNumber))
+    {
+        if (m_hardware)
+        {
+            m_hardware->alarm();
+        }
+        qDebug() << "入场被拒绝, 黑名单车辆:" << plateNumber;
+        markPlateCooldown(plateNumber);
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
+        return;
+    }
+
+    if (m_db->getAvailableSpaces() <= 0)
+    {
+        if (m_hardware)
+        {
+            m_hardware->alarm();
+        }
+        if (m_networkClient && m_networkClient->isConnected())
+        {
+            const QString audioName = QString("parking_full_%1.wav")
+                                          .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss_zzz"));
+            m_networkClient->requestAudio("parking_full", "停车场车位已满，请勿入场", audioName);
+        }
+        qDebug() << "入场被拒绝, 停车场已满, 车牌:" << plateNumber;
+        markPlateCooldown(plateNumber);
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
+        return;
+    }
+
+    int recordId = m_db->addVehicle(plateNumber, rfidCard);
+    if (recordId < 0)
+    {
+        qDebug() << "入场落库失败, 车牌:" << plateNumber << "RFID:" << rfidCard << m_db->lastError();
+        clearPendingRfid();
+        m_capturePurpose = CapturePurpose::None;
+        return;
+    }
+
+    QString entryImagePath = saveVehicleCaptureImage(recordId, "entry", m_lastCapturePixmap);
+    if (!entryImagePath.isEmpty())
+    {
+        if (!m_db->updateVehicleEntryImage(recordId, entryImagePath))
+        {
+            qDebug() << "入场抓拍路径写入数据库失败:" << m_db->lastError();
+        }
+    }
+    else
+    {
+        qDebug() << "入场抓拍未写入SD卡，entry_image将保持为空";
+    }
+
+    qDebug() << "入场成功, recordId:" << recordId << "车牌:" << plateNumber << "RFID:" << rfidCard;
+    markPlateCooldown(plateNumber);
+    openGateForPassage(QString("车辆 %1 入场").arg(plateNumber));
+    clearPendingRfid();
+    m_capturePurpose = CapturePurpose::None;
+    updateParkingStatus();
+    updateRecentEntries();
+}
+
+void MainWindow::processExitRecognitionResult(const QString &plateNumber)
+{
+    if (m_pendingExitVehicle.id == 0)
+    {
+        clearPendingExitFlow();
+        clearPendingRfid();
+        return;
+    }
+
+    m_pendingExitRecognizedPlate = plateNumber;
+    m_pendingExitImagePath = saveVehicleCaptureImage(m_pendingExitVehicle.id, "exit", m_lastCapturePixmap);
+
+    const QString boundPlate = normalizePlate(m_pendingExitVehicle.plateNumber);
+    const QString recognized = normalizePlate(plateNumber);
+    const bool matched = !recognized.isEmpty() && recognized == boundPlate;
+
+    QDateTime now = QDateTime::currentDateTime();
+    qint64 durationMinutes = (m_pendingExitVehicle.entryTime.secsTo(now) + 59) / 60;
+    m_pendingExitFee = m_db->calculateFee(m_pendingExitVehicle.entryTime, now);
+
+    if (matched)
+    {
+        qDebug() << "出场车牌核验通过, 车牌:" << plateNumber;
+        showExitSettlementDialog(m_pendingExitVehicle, plateNumber);
+        return;
+    }
+
+    qDebug() << "出场车牌不一致, 绑定:" << boundPlate << "识别:" << recognized;
+    if (m_hardware)
+    {
+        m_hardware->alarm(5, 150);
+    }
+    setGateOpened(false);
+
+    showExitVerifyDialog(
+        m_pendingExitVehicle,
+        plateNumber,
+        false,
+        "车牌与绑定信息不符，闸机已锁定，请人工核对入出场抓拍图");
 }

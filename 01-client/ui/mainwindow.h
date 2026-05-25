@@ -51,7 +51,8 @@ private slots:
     void onSettingsClicked();
     void onRfidCardDetected(const QString &cardId);
     void onRfidReadError(const QString &error);
-    void onRecognitionTimer();
+    void onExitManualPass();
+    void onExitRetryRecognize();
     void updateParkingStatus();
     void updateRecentEntries();
     void onQueryBack();
@@ -75,8 +76,11 @@ private slots:
 private:
     bool isPlateInCooldown(const QString &plateNumber) const;
     void markPlateCooldown(const QString &plateNumber);
-    void showExitDialog(const VehicleInfo &vehicleInfo);
-    void closeExitDialog(bool resumeRecognition = true);
+    void showExitVerifyDialog(const VehicleInfo &vehicleInfo, const QString &recognizedPlate,
+                              bool plateMatched, const QString &statusText);
+    void showExitSettlementDialog(const VehicleInfo &vehicleInfo, const QString &recognizedPlate);
+    void finishExitAfterSettlement();
+    void closeExitDialog(bool clearPending = true);
     void setGateOpened(bool opened, const QString &reason = QString());
     void openGateForPassage(const QString &reason);
     void updateGateStatusDisplay();
@@ -87,7 +91,20 @@ private:
     void setupRfidThread();
     void setupNetwork();
     void processRecognitionResult(const QString &plateNumber, double confidence);
+    void processEntryRecognitionResult(const QString &plateNumber);
+    void processExitRecognitionResult(const QString &plateNumber);
+    void rejectRfidWithBlacklist(const QString &plateNumber, const QString &reason);
     void resetCaptureFlow();
+    bool triggerCaptureForRecognition();
+    bool isPendingRfidValid() const;
+    void clearPendingRfid();
+    void clearPendingExitFlow();
+    bool completeExitCheckout(const QString &reasonTag);
+    QString captureDirectoryPath() const;
+    bool ensureCaptureStorageReady() const;
+    QString saveVehicleCaptureImage(int vehicleId, const QString &tag, const QPixmap &pixmap) const;
+    static QString normalizePlate(const QString &plateNumber);
+    enum class CapturePurpose { None, Entry, Exit, DuplicateEntry, InvalidExit };
     QGroupBox* createVideoPanel();
     QGroupBox* createStatusPanel();
     QGroupBox* createGatePanel();
@@ -124,7 +141,6 @@ private:
     // 定时器
     QTimer *m_updateTimer;
     QTimer *m_videoRefreshTimer;
-    QTimer *m_recognitionTimer;
     QTimer *m_gateCloseTimer;
 
     // 数据库
@@ -151,6 +167,10 @@ private:
     bool m_waitingForResult;
     QString m_pendingRfidCard;
     QDateTime m_pendingRfidTime;
+    CapturePurpose m_capturePurpose;
+    VehicleInfo m_pendingExitVehicle;
+    QString m_pendingExitRecognizedPlate;
+    QString m_pendingExitImagePath;
     QHash<QString, QDateTime> m_plateCooldowns;
     QString m_pendingExitPlateNumber;
     QDateTime m_pendingExitEntryTime;
@@ -159,6 +179,8 @@ private:
     QDateTime m_recognitionBlockedUntil;
     QDateTime m_gateOpenUntil;
     QString m_gateOpenReason;
+    bool m_videoPreviewActive;
+    bool m_exitCheckoutSucceeded;
 
     // 硬件管理（外部传入）
     HardwareInit *m_hardware;

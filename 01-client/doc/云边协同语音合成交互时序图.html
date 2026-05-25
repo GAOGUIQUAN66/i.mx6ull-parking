@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>云边协同语音合成交互时序图</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: SimSun, NSimSun, "Songti SC", STSong, serif;
+      background: #fafafa;
+      color: #111;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 14px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .wrap {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 16px 18px 18px;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    .note {
+      font-size: 15px;
+      font-weight: 500;
+      color: #333;
+      margin-top: 12px;
+      line-height: 1.55;
+    }
+    svg { display: block; margin: 0 auto; max-width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>图4.5　云边协同语音合成交互时序图</h1>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 660" width="100%" height="auto" style="font-family:SimSun,NSimSun,'Songti SC',STSong,serif;">
+      <defs>
+        <style type="text/css"><![CDATA[
+          .life { font-size: 20px; font-weight: 700; fill: #0d47a1; }
+          .msg { font-size: 18px; font-weight: 700; fill: #111; }
+          .box-title { font-size: 18px; font-weight: 700; fill: #111; }
+          .box-sub { font-size: 17px; font-weight: 700; fill: #333; }
+          .box-note { font-size: 17px; font-weight: 700; fill: #424242; }
+        ]]></style>
+        <marker id="arr" markerWidth="11" markerHeight="11" refX="10" refY="3.5" orient="auto">
+          <path d="M0,0 L0,7 L10,3.5 z" fill="#1565c0" />
+        </marker>
+      </defs>
+
+      <!-- 生命线 -->
+      <text x="140" y="40" text-anchor="middle" class="life">主窗口（业务）</text>
+      <text x="360" y="40" text-anchor="middle" class="life">端侧客户端（TCP）</text>
+      <text x="640" y="40" text-anchor="middle" class="life">边侧服务（Ubuntu·TTS）</text>
+      <line x1="140" y1="48" x2="140" y2="580" stroke="#78909c" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <line x1="360" y1="48" x2="360" y2="580" stroke="#78909c" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <line x1="640" y1="48" x2="640" y2="580" stroke="#78909c" stroke-width="1.4" stroke-dasharray="5 4"/>
+
+      <!-- ① -->
+      <line x1="140" y1="98" x2="350" y2="98" stroke="#1565c0" stroke-width="2.5" marker-end="url(#arr)"/>
+      <text x="245" y="90" text-anchor="middle" class="msg">① 获取待播报文本</text>
+
+      <!-- ② -->
+      <line x1="360" y1="148" x2="630" y2="148" stroke="#1565c0" stroke-width="2.5" marker-end="url(#arr)"/>
+      <text x="495" y="140" text-anchor="middle" class="msg">② 发送文本类型帧（TCP）</text>
+
+      <!-- ③ -->
+      <rect x="548" y="168" width="184" height="54" rx="5" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+      <text x="640" y="192" text-anchor="middle" class="box-title">③ 边侧 TTS 合成 WAV</text>
+      <text x="640" y="212" text-anchor="middle" class="box-sub">（离线引擎）</text>
+
+      <!-- ④ -->
+      <line x1="640" y1="248" x2="370" y2="248" stroke="#1565c0" stroke-width="2.5" marker-end="url(#arr)"/>
+      <text x="505" y="240" text-anchor="middle" class="msg">④ 返回音频类型帧（整帧）</text>
+
+      <!-- ⑤⑥ -->
+      <rect x="248" y="278" width="250" height="100" rx="6" fill="#fff8e1" stroke="#ef6c00" stroke-width="1.5"/>
+      <text x="373" y="312" text-anchor="middle" class="box-title">⑤ 按帧头收齐整帧</text>
+      <text x="373" y="338" text-anchor="middle" class="box-title">⑥ 解析 meta+JSON+WAV</text>
+      <text x="373" y="364" text-anchor="middle" class="box-note">（TCP 接收缓冲定界）</text>
+
+      <!-- ⑦ -->
+      <rect x="248" y="408" width="250" height="48" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+      <text x="373" y="438" text-anchor="middle" class="box-title">⑦ 保存 WAV 文件</text>
+
+      <!-- ⑧ -->
+      <rect x="258" y="488" width="204" height="56" rx="6" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="1.5"/>
+      <text x="360" y="522" text-anchor="middle" class="box-title">⑧ aplay 本地播放</text>
+    </svg>
+    <p class="note"><strong>与工程对应：</strong>端侧经 TCP 发送文本类型帧；边侧合成后以音频类型帧一次性返回（Len+Typ+meta+JSON+WAV）；端侧收齐整帧后保存 WAV，由音频播放线程调用 aplay 播放。</p>
+  </div>
+</body>
+</html>

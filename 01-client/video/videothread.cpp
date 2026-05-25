@@ -79,9 +79,8 @@ void VideoThread::triggerCapture()
 QImage VideoThread::takeLatestFrame()
 {
     QMutexLocker locker(&m_frameMutex);
-    QImage frame = m_latestFrame;
-    m_latestFrame = QImage();
-    return frame;
+    // 预览只读最新帧，不清空；采集线程会用新帧覆盖，避免 UI 轮询快于采集时 buffer 被掏空导致画面闪回占位文字
+    return m_latestFrame;
 }
 
 void VideoThread::run()
